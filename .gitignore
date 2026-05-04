@@ -1,0 +1,15 @@
+# Rust build artifacts
+/target/
+
+# PPT 관련 파일
+make_ppt.js
+*.pptx
+*.pdf
+slide-*.jpg
+
+# Editor / IDE
+.vscode/
+.claude/
+
+# macOS
+.DS_Store

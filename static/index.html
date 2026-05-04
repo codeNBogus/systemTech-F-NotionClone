@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collab Board - 협업 보드</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f23;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: #1a1a2e;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .header h1 {
+            font-size: 20px;
+            color: #7c83ff;
+            font-weight: 600;
+        }
+        .header .subtitle {
+            font-size: 12px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        /* Board selector */
+        .board-bar {
+            background: #16162b;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .board-bar select {
+            background: #1e1e3a;
+            color: #e0e0e0;
+            border: 1px solid #3a3a5a;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            min-width: 200px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #7c83ff;
+            color: white;
+        }
+        .btn-primary:hover { background: #6b72ee; }
+        .btn-secondary {
+            background: #2a2a4a;
+            color: #ccc;
+        }
+        .btn-secondary:hover { background: #3a3a5a; }
+        .btn-danger {
+            background: #ff4757;
+            color: white;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+        .btn-danger:hover { background: #e0404f; }
+        .btn-small {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        /* Board container */
+        .board-container {
+            display: flex;
+            gap: 16px;
+            padding: 20px 24px;
+            overflow-x: auto;
+            min-height: calc(100vh - 120px);
+            align-items: flex-start;
+        }
+
+        /* Column */
+        .column {
+            background: #1a1a2e;
+            border-radius: 10px;
+            min-width: 300px;
+            max-width: 300px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #2a2a4a;
+        }
+        .column-header {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .column-header h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #b0b0d0;
+        }
+        .column-header .card-count {
+            background: #2a2a4a;
+            color: #888;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+        .column-body {
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 60px;
+        }
+        .column-body.drag-over {
+            background: #1e1e3a;
+        }
+        .column-footer {
+            padding: 8px;
+            border-top: 1px solid #2a2a4a;
+        }
+
+        /* Card */
+        .card {
+            background: #22223a;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: grab;
+            transition: all 0.15s;
+            position: relative;
+        }
+        .card:hover {
+            border-color: #7c83ff;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(124, 131, 255, 0.15);
+        }
+        .card.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+        .card-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        .card-desc {
+            font-size: 12px;
+            color: #888;
+            line-height: 1.4;
+        }
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 11px;
+            color: #666;
+        }
+        .card-version {
+            background: #2a2a4a;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+        .card-actions {
+            display: none;
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            gap: 4px;
+        }
+        .card:hover .card-actions {
+            display: flex;
+        }
+
+        /* Status badge */
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .status-badge:hover {
+            filter: brightness(1.2);
+            transform: scale(1.05);
+        }
+        .status-todo {
+            background: #3a3a5a;
+            color: #a0a0c0;
+        }
+        .status-in_progress {
+            background: #2d4a5a;
+            color: #7dc8ff;
+        }
+        .status-done {
+            background: #2d5a3d;
+            color: #7dffb3;
+        }
+
+        /* Status indicator bar on card left */
+        .card.card-status-todo { border-left: 3px solid #6a6a8a; }
+        .card.card-status-in_progress { border-left: 3px solid #4a9eff; }
+        .card.card-status-done { border-left: 3px solid #4aff8a; }
+
+        /* Add column button */
+        .add-column {
+            min-width: 300px;
+            max-width: 300px;
+            background: rgba(124, 131, 255, 0.08);
+            border: 2px dashed #3a3a5a;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            cursor: pointer;
+            color: #666;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .add-column:hover {
+            border-color: #7c83ff;
+            color: #7c83ff;
+            background: rgba(124, 131, 255, 0.12);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #1a1a2e;
+            border: 1px solid #2a2a4a;
+            border-radius: 12px;
+            padding: 24px;
+            min-width: 400px;
+            max-width: 500px;
+        }
+        .modal h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: #7c83ff;
+        }
+        .modal input, .modal textarea, .modal select {
+            width: 100%;
+            background: #22223a;
+            border: 1px solid #3a3a5a;
+            color: #e0e0e0;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-bottom: 12px;
+            font-family: inherit;
+        }
+        .modal textarea { min-height: 80px; resize: vertical; }
+        .modal input:focus, .modal textarea:focus, .modal select:focus {
+            outline: none;
+            border-color: #7c83ff;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+
+        /* Toast notification */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 200;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            animation: slideIn 0.3s ease;
+            max-width: 350px;
+        }
+        .toast-success { background: #2d5a3d; color: #7dffb3; border: 1px solid #3d7a5d; }
+        .toast-error { background: #5a2d2d; color: #ff7d7d; border: 1px solid #7a3d3d; }
+        .toast-warning { background: #5a4a2d; color: #ffd77d; border: 1px solid #7a6a3d; }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 60vh;
+            color: #666;
+        }
+        .empty-state h2 { font-size: 24px; margin-bottom: 8px; color: #888; }
+        .empty-state p { margin-bottom: 16px; }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>📋 Collab Board</h1>
+            <div class="subtitle">Rust 기반 협업 보드 시스템</div>
+        </div>
+    </div>
+
+    <div class="board-bar">
+        <select id="boardSelect" onchange="selectBoard(this.value)">
+            <option value="">-- 보드 선택 --</option>
+        </select>
+        <button class="btn btn-primary btn-small" onclick="showCreateBoardModal()">+ 새 보드</button>
+    </div>
+
+    <div id="boardContainer" class="board-container">
+        <div class="empty-state">
+            <h2>보드를 선택하세요</h2>
+            <p>왼쪽 상단에서 보드를 선택하거나 새로 만드세요.</p>
+        </div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Create Board Modal -->
+    <div id="createBoardModal" class="modal-overlay" onclick="closeModal(event, 'createBoardModal')">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h2>새 보드 만들기</h2>
+            <label>보드 이름</label>
+            <input type="text" id="boardTitleInput" placeholder="예: 프로젝트 관리" onkeydown="if(event.key==='Enter') createBoard()">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideModal('createBoardModal')">취소</button>
+                <button class="btn btn-primary" onclick="createBoard()">만들기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Column Modal -->
+    <div id="createColumnModal" class="modal-overlay" onclick="closeModal(event, 'createColumnModal')">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h2>새 컬럼 추가</h2>
+            <label>컬럼 이름</label>
+            <input type="text" id="columnTitleInput" placeholder="예: To Do" onkeydown="if(event.key==='Enter') createColumn()">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideModal('createColumnModal')">취소</button>
+                <button class="btn btn-primary" onclick="createColumn()">추가</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Card Modal -->
+    <div id="createCardModal" class="modal-overlay" onclick="closeModal(event, 'createCardModal')">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h2>새 카드 추가</h2>
+            <input type="hidden" id="cardColumnId">
+            <label>제목</label>
+            <input type="text" id="cardTitleInput" placeholder="카드 제목">
+            <label>설명</label>
+            <textarea id="cardDescInput" placeholder="카드 설명 (선택)"></textarea>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideModal('createCardModal')">취소</button>
+                <button class="btn btn-primary" onclick="createCard()">추가</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Card Modal -->
+    <div id="editCardModal" class="modal-overlay" onclick="closeModal(event, 'editCardModal')">
+        <div class="modal" onclick="event.stopPropagation()">
+            <h2>카드 수정</h2>
+            <input type="hidden" id="editCardId">
+            <input type="hidden" id="editCardVersion">
+            <label>제목</label>
+            <input type="text" id="editCardTitleInput" placeholder="카드 제목">
+            <label>설명</label>
+            <textarea id="editCardDescInput" placeholder="카드 설명"></textarea>
+            <label>상태</label>
+            <select id="editCardStatusSelect">
+                <option value="todo">⏸ 미진행</option>
+                <option value="in_progress">▶ 진행중</option>
+                <option value="done">✔ 완료</option>
+            </select>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideModal('editCardModal')">취소</button>
+                <button class="btn btn-primary" onclick="updateCard()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '/api';
+        let currentBoardId = null;
+        let draggedCardId = null;
+        let draggedCardVersion = null;
+
+        const STATUS_LABELS = {
+            todo: '⏸ 미진행',
+            in_progress: '▶ 진행중',
+            done: '✔ 완료',
+        };
+
+        // 상태 순환: 클릭 시 다음 상태로 전환
+        const STATUS_NEXT = {
+            todo: 'in_progress',
+            in_progress: 'done',
+            done: 'todo',
+        };
+
+        // ========== API Helpers ==========
+
+        async function api(method, path, body) {
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(API + path, opts);
+            if (res.status === 204) return null;
+            const data = await res.json();
+            if (!res.ok) {
+                if (data.code === 'VERSION_CONFLICT') {
+                    showToast('충돌 발생! 다른 사용자가 이미 수정했습니다. 새로고침 후 다시 시도하세요.', 'warning');
+                }
+                throw data;
+            }
+            return data;
+        }
+
+        // ========== Toast ==========
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3500);
+        }
+
+        // ========== Modal ==========
+
+        function showModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+        function hideModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+        function closeModal(event, id) {
+            if (event.target === event.currentTarget) hideModal(id);
+        }
+
+        // ========== Board ==========
+
+        async function loadBoards() {
+            const boards = await api('GET', '/boards');
+            const select = document.getElementById('boardSelect');
+            select.innerHTML = '<option value="">-- 보드 선택 --</option>';
+            boards.forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.id;
+                opt.textContent = b.title;
+                if (b.id === currentBoardId) opt.selected = true;
+                select.appendChild(opt);
+            });
+        }
+
+        function showCreateBoardModal() {
+            document.getElementById('boardTitleInput').value = '';
+            showModal('createBoardModal');
+            document.getElementById('boardTitleInput').focus();
+        }
+
+        async function createBoard() {
+            const title = document.getElementById('boardTitleInput').value.trim();
+            if (!title) return;
+            const board = await api('POST', '/boards', { title });
+            hideModal('createBoardModal');
+            currentBoardId = board.id;
+            await loadBoards();
+            await loadBoard();
+            showToast('보드가 생성되었습니다.');
+        }
+
+        async function selectBoard(boardId) {
+            if (!boardId) {
+                currentBoardId = null;
+                renderEmpty();
+                return;
+            }
+            currentBoardId = boardId;
+            await loadBoard();
+        }
+
+        async function loadBoard() {
+            if (!currentBoardId) return;
+            const detail = await api('GET', `/boards/${currentBoardId}/detail`);
+            renderBoard(detail);
+        }
+
+        // ========== Render ==========
+
+        function renderEmpty() {
+            document.getElementById('boardContainer').innerHTML = `
+                <div class="empty-state">
+                    <h2>보드를 선택하세요</h2>
+                    <p>왼쪽 상단에서 보드를 선택하거나 새로 만드세요.</p>
+                </div>`;
+        }
+
+        function renderBoard(detail) {
+            const container = document.getElementById('boardContainer');
+            container.innerHTML = '';
+
+            detail.columns.forEach(colData => {
+                const col = colData.column;
+                const cards = colData.cards;
+
+                const colEl = document.createElement('div');
+                colEl.className = 'column';
+                colEl.innerHTML = `
+                    <div class="column-header">
+                        <div>
+                            <h3>${escHtml(col.title)} <span class="card-count">${cards.length}</span></h3>
+                        </div>
+                        <button class="btn btn-danger btn-small" onclick="deleteColumn('${col.id}')">✕</button>
+                    </div>
+                    <div class="column-body" data-column-id="${col.id}"
+                         ondragover="onDragOver(event)" ondrop="onDrop(event, '${col.id}')"
+                         ondragleave="onDragLeave(event)">
+                        ${cards.map(c => renderCard(c)).join('')}
+                    </div>
+                    <div class="column-footer">
+                        <button class="btn btn-secondary btn-small" style="width:100%"
+                                onclick="showCreateCardModal('${col.id}')">+ 카드 추가</button>
+                    </div>`;
+                container.appendChild(colEl);
+            });
+
+            // Add column button
+            const addCol = document.createElement('div');
+            addCol.className = 'add-column';
+            addCol.textContent = '+ 컬럼 추가';
+            addCol.onclick = () => {
+                document.getElementById('columnTitleInput').value = '';
+                showModal('createColumnModal');
+                document.getElementById('columnTitleInput').focus();
+            };
+            container.appendChild(addCol);
+        }
+
+        function renderCard(card) {
+            const statusLabel = STATUS_LABELS[card.status] || card.status;
+            return `
+                <div class="card card-status-${card.status}" draggable="true"
+                     ondragstart="onDragStart(event, '${card.id}', ${card.version})"
+                     ondragend="onDragEnd(event)">
+                    <div class="card-actions">
+                        <button class="btn btn-secondary btn-small" onclick="showEditCardModal('${card.id}')">✎</button>
+                        <button class="btn btn-danger btn-small" onclick="deleteCard('${card.id}')">✕</button>
+                    </div>
+                    <div class="card-title">${escHtml(card.title)}</div>
+                    ${card.description ? `<div class="card-desc">${escHtml(card.description)}</div>` : ''}
+                    <div class="card-meta">
+                        <span class="status-badge status-${card.status}"
+                              onclick="cycleStatus(event, '${card.id}', '${card.status}', ${card.version})"
+                              title="클릭하여 상태 변경">${statusLabel}</span>
+                        <span class="card-version">v${card.version}</span>
+                    </div>
+                </div>`;
+        }
+
+        function escHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ========== Column ==========
+
+        async function createColumn() {
+            const title = document.getElementById('columnTitleInput').value.trim();
+            if (!title || !currentBoardId) return;
+            await api('POST', `/boards/${currentBoardId}/columns`, { title });
+            hideModal('createColumnModal');
+            await loadBoard();
+            showToast('컬럼이 추가되었습니다.');
+        }
+
+        async function deleteColumn(columnId) {
+            if (!confirm('이 컬럼과 모든 카드를 삭제하시겠습니까?')) return;
+            await api('DELETE', `/columns/${columnId}`);
+            await loadBoard();
+            showToast('컬럼이 삭제되었습니다.');
+        }
+
+        // ========== Card ==========
+
+        function showCreateCardModal(columnId) {
+            document.getElementById('cardColumnId').value = columnId;
+            document.getElementById('cardTitleInput').value = '';
+            document.getElementById('cardDescInput').value = '';
+            showModal('createCardModal');
+            document.getElementById('cardTitleInput').focus();
+        }
+
+        async function createCard() {
+            const columnId = document.getElementById('cardColumnId').value;
+            const title = document.getElementById('cardTitleInput').value.trim();
+            const description = document.getElementById('cardDescInput').value.trim();
+            if (!title) return;
+            await api('POST', `/columns/${columnId}/cards`, { title, description });
+            hideModal('createCardModal');
+            await loadBoard();
+            showToast('카드가 추가되었습니다.');
+        }
+
+        async function showEditCardModal(cardId) {
+            const card = await api('GET', `/cards/${cardId}`);
+            document.getElementById('editCardId').value = card.id;
+            document.getElementById('editCardVersion').value = card.version;
+            document.getElementById('editCardTitleInput').value = card.title;
+            document.getElementById('editCardDescInput').value = card.description;
+            document.getElementById('editCardStatusSelect').value = card.status;
+            showModal('editCardModal');
+            document.getElementById('editCardTitleInput').focus();
+        }
+
+        async function updateCard() {
+            const cardId = document.getElementById('editCardId').value;
+            const version = parseInt(document.getElementById('editCardVersion').value);
+            const title = document.getElementById('editCardTitleInput').value.trim();
+            const description = document.getElementById('editCardDescInput').value.trim();
+            const status = document.getElementById('editCardStatusSelect').value;
+            if (!title) return;
+            try {
+                await api('PUT', `/cards/${cardId}`, { title, description, status, version });
+                hideModal('editCardModal');
+                await loadBoard();
+                showToast('카드가 수정되었습니다.');
+            } catch (e) {
+                if (e.code !== 'VERSION_CONFLICT') showToast('수정 실패: ' + e.error, 'error');
+            }
+        }
+
+        // 상태 배지 클릭 시 다음 상태로 순환 (미진행 → 진행중 → 완료 → 미진행)
+        async function cycleStatus(event, cardId, currentStatus, version) {
+            event.stopPropagation();
+            const nextStatus = STATUS_NEXT[currentStatus];
+            try {
+                await api('PATCH', `/cards/${cardId}/status`, { status: nextStatus, version });
+                await loadBoard();
+                showToast(`상태가 "${STATUS_LABELS[nextStatus]}"(으)로 변경되었습니다.`);
+            } catch (e) {
+                if (e.code !== 'VERSION_CONFLICT') showToast('상태 변경 실패: ' + e.error, 'error');
+            }
+        }
+
+        async function deleteCard(cardId) {
+            if (!confirm('이 카드를 삭제하시겠습니까?')) return;
+            try {
+                await api('DELETE', `/cards/${cardId}`);
+                await loadBoard();
+                showToast('카드가 삭제되었습니다.');
+            } catch (e) {
+                showToast('삭제 실패: ' + e.error, 'error');
+            }
+        }
+
+        // ========== Drag & Drop ==========
+
+        function onDragStart(event, cardId, version) {
+            draggedCardId = cardId;
+            draggedCardVersion = version;
+            event.target.classList.add('dragging');
+            event.dataTransfer.effectAllowed = 'move';
+        }
+
+        function onDragEnd(event) {
+            event.target.classList.remove('dragging');
+            document.querySelectorAll('.column-body').forEach(el => el.classList.remove('drag-over'));
+        }
+
+        function onDragOver(event) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            event.currentTarget.classList.add('drag-over');
+        }
+
+        function onDragLeave(event) {
+            event.currentTarget.classList.remove('drag-over');
+        }
+
+        async function onDrop(event, targetColumnId) {
+            event.preventDefault();
+            event.currentTarget.classList.remove('drag-over');
+            if (!draggedCardId) return;
+
+            const columnBody = event.currentTarget;
+            const cards = columnBody.querySelectorAll('.card');
+            let targetPosition = cards.length;
+
+            try {
+                await api('PATCH', `/cards/${draggedCardId}/move`, {
+                    target_column_id: targetColumnId,
+                    target_position: targetPosition,
+                    version: draggedCardVersion,
+                });
+                await loadBoard();
+                showToast('카드가 이동되었습니다.');
+            } catch (e) {
+                if (e.code !== 'VERSION_CONFLICT') showToast('이동 실패: ' + e.error, 'error');
+            }
+
+            draggedCardId = null;
+            draggedCardVersion = null;
+        }
+
+        // ========== Init ==========
+        loadBoards();
+    </script>
+</body>
+</html>
