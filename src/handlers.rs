@@ -1,5 +1,6 @@
 use axum::extract::{Path, State};
 use axum::Json;
+use axum::http::StatusCode;
 
 use crate::errors::AppError;
 use crate::models::*;
@@ -14,6 +15,14 @@ pub async fn create_board(
     let board = state.create_board(req.title).await;
     Json(board)
 }
+pub async fn delete_board(
+    State(state): State<AppState>,
+    Path(board_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    state.delete_board(&board_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 
 pub async fn list_boards(State(state): State<AppState>) -> Json<Vec<Board>> {
     Json(state.list_boards().await)

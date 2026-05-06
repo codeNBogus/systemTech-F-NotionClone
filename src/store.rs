@@ -202,6 +202,37 @@ impl AppState {
         Ok(column)
     }
 
+    /// 보드 삭제 - 보드에 속한 모든 컬럼과 카드도 함께 삭제 (cascade)
+    pub async fn delete_board(&self, board_id: &str) -> Result<(), AppError> {
+        let mut store = self.inner.write().await;
+
+        if !store.boards.contains_key(board_id) {
+            return Err(AppError::BoardNotFound(board_id.to_string()));
+        }
+
+        // 삭제할 컬럼 ID들을 먼저 수집 (borrow checker 회피)
+        let deleted_column_ids: Vec<String> = store
+            .columns
+            .values()
+            .filter(|c| c.board_id == board_id)
+            .map(|c| c.id.clone())
+            .collect();
+
+        // 보드 제거
+        store.boards.remove(board_id);
+        // 보드의 컬럼 제거
+        store.columns.retain(|_, c| c.board_id != board_id);
+        // 그 컬럼들에 속한 카드 제거
+        store
+            .cards
+            .retain(|_, c| !deleted_column_ids.contains(&c.column_id));
+
+        self.emit(WsEvent::BoardDeleted {
+            board_id: board_id.to_string(),
+        });
+        Ok(())
+    }
+
     pub async fn delete_column(&self, column_id: &str) -> Result<(), AppError> {
         let mut store = self.inner.write().await;
 

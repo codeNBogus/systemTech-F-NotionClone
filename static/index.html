@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
+
     <title>Collab Board - 협업 보드</title>
     <style>
         * {
@@ -598,6 +598,7 @@
             <option value="">-- 보드 선택 --</option>
         </select>
         <button class="btn btn-primary btn-small" onclick="showCreateBoardModal()">+ 새 보드</button>
+        <button onclick="deleteBoard()" class="btn-danger">🗑️ 보드 삭제</button>
     </div>
 
     <div id="boardContainer" class="board-container">
@@ -968,6 +969,29 @@
                 showToast('삭제 실패: ' + e.error, 'error');
             }
         }
+
+        async function deleteBoard() {
+            if (!currentBoardId) {
+                showToast('삭제할 보드를 선택하세요', 'warning');
+                return;
+            }
+            const board = await apiCall(`/api/boards/${currentBoardId}/detail`, 'GET').catch(() => null);
+            const boardTitle = board?.board?.title || '이 보드';
+
+            if (!confirm(`"${boardTitle}"을(를) 정말 삭제하시겠습니까?\n모든 컬럼과 카드가 함께 삭제됩니다.`)) {
+                return;
+            }
+            try {
+                await apiCall(`/api/boards/${currentBoardId}`, 'DELETE');
+                showToast('보드가 삭제되었습니다', 'success');
+                currentBoardId = null;
+                document.getElementById('board-container').innerHTML = '';
+                await loadBoards();
+            } catch (e) {
+                showToast('보드 삭제 실패: ' + e.message, 'error');
+            }
+        }
+
 
         // ========== Drag & Drop ==========
 
