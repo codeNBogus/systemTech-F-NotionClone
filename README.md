@@ -35,6 +35,75 @@ Notion 및 Trello의 보드 기능을 참고하여 카드 생성/수정/삭제, 
 - 웹 UI에서 카드 hover 시 🕐 버튼을 클릭해 수정 이력 모달로 확인 가능
 - 동시성 문제 발생 시 어느 시점에 어떤 변경이 일어났는지 추적하는 데 활용
 
+### WebSocket 브로드캐스트 (추가 기능)
+- 카드·컬럼 변경 시 연결된 모든 클라이언트에 실시간 이벤트 전송
+- 이벤트 종류: `card_created`, `card_updated`, `card_deleted`, `card_moved`, `card_status_changed`, `card_reordered`, `column_created`, `column_deleted`
+- `emit()`을 write lock 안에서 호출하여 뮤테이션 순서 = 브로드캐스트 순서 보장
+- `/ws` 엔드포인트로 WebSocket 연결 (`ws://localhost:3000/ws`)
+
+#### 테스트 실행 방법
+
+**전체 WS 테스트 실행**
+```bash
+cargo test --test ws_broadcast -- --nocapture
+```
+
+**테스트별 개별 실행**
+```bash
+# 테스트 1: 10개 클라이언트 일관성·순서 검증
+cargo test --test ws_broadcast ws_broadcast_consistency_and_order -- --nocapture
+
+# 테스트 2: 혼합 이벤트 순서 검증
+cargo test --test ws_broadcast ws_broadcast_mixed_events -- --nocapture
+```
+
+#### 확인 포인트
+
+**테스트 1 — `ws_broadcast_consistency_and_order`**
+
+10개 클라이언트가 카드 8개를 빠짐없이, 동일한 순서로 수신했는지 검증한다.
+
+정상 출력:
+```
+✅ 10 clients × 8 card_created events — all consistent and in order
+```
+
+실패 시 출력 예시:
+```
+# 일부 이벤트 누락
+client 3: received 6/8 events
+
+# 수신 순서 불일치
+client 5: ordering mismatch
+  got:      ["card-00", "card-02", "card-01", ...]
+  expected: ["card-00", "card-01", "card-02", ...]
+```
+
+**테스트 2 — `ws_broadcast_mixed_events`**
+
+카드 하나에 대해 생성→상태변경→이동 이벤트가 항상 이 순서로 전달되는지 검증한다.
+
+정상 출력:
+```
+✅ 10 clients — card_created → card_status_changed → card_moved 순서 일치
+```
+
+실패 시 출력 예시:
+```
+client 7: event order mismatch
+  got:      ["card_created", "card_moved", "card_status_changed"]
+  expected: ["card_created", "card_status_changed", "card_moved"]
+```
+
+#### 순서 보장 원리 확인
+
+`src/store.rs`에서 `emit()`의 위치가 순서를 결정한다.
+
+| 위치 | 결과 |
+|------|------|
+| write lock **안** (현재) | 뮤테이션 순서 = 브로드캐스트 순서 → 테스트 통과 |
+| write lock **밖**으로 이동 | 동시 요청 시 발송 순서 역전 가능 → 테스트 간헐적 실패 |
+
 ## 🏗️ 시스템 구조
 
 ### 백엔드
