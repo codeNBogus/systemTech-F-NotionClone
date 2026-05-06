@@ -181,10 +181,12 @@ pub struct ErrorResponse {
     pub code: String,
 }
 
-/// WebSocket 브로드캐스트 이벤트
-#[derive(Debug, Clone, Serialize)]
+/// WebSocket 브로드캐스트 이벤트 (WAL replay를 위해 Deserialize 추가)
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum WsEvent {
+    BoardCreated { board: Board },
+    BoardDeleted { board_id: String },
     CardCreated { card: Card },
     CardUpdated { card: Card },
     CardDeleted { card_id: String },
@@ -194,6 +196,7 @@ pub enum WsEvent {
     ColumnCreated { column: Column },
     ColumnDeleted { column_id: String },
 }
+
 
 // === 팩토리 메서드 ===
 

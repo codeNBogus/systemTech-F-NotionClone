@@ -1,18 +1,23 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+use crate::wal::WalWriter;
+
 
 use crate::errors::AppError;
 use crate::models::*;
 
 /// 메모리 기반 데이터 저장소
 /// Arc<RwLock<...>>을 사용하여 다중 사용자 동시 접근을 안전하게 처리
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     inner: Arc<RwLock<StoreInner>>,
     /// WebSocket 브로드캐스트 채널 — write lock 안에서 send하여 이벤트 순서를 보장
     tx: broadcast::Sender<Arc<String>>,
+    /// Write-Ahead Log (선택적) — Some이면 모든 이벤트를 디스크에 기록
+    wal: Option<Arc<WalWriter>>,
 }
+
 
 #[derive(Debug)]
 struct StoreInner {
@@ -22,6 +27,7 @@ struct StoreInner {
 }
 
 impl AppState {
+    /// WAL 없이 생성 (테스트용)
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
         Self {
@@ -31,8 +37,24 @@ impl AppState {
                 cards: HashMap::new(),
             })),
             tx,
+            wal: None,
         }
     }
+
+    /// WAL과 함께 생성 (프로덕션용)
+    pub fn with_wal(wal: Arc<WalWriter>) -> Self {
+        let (tx, _) = broadcast::channel(256);
+        Self {
+            inner: Arc::new(RwLock::new(StoreInner {
+                boards: HashMap::new(),
+                columns: HashMap::new(),
+                cards: HashMap::new(),
+            })),
+            tx,
+            wal: Some(wal),
+        }
+    }
+
 
     /// WS 클라이언트가 구독할 Receiver 반환
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<String>> {
@@ -40,14 +62,22 @@ impl AppState {
     }
 
     /// WsEvent를 JSON 직렬화하여 브로드캐스트 (sync — write lock 안에서 호출 가능)
-    fn emit(&self, event: WsEvent) {
-        if self.tx.receiver_count() == 0 {
-            return;
-        }
-        if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.tx.send(Arc::new(json));
+ fn emit(&self, event: WsEvent) {
+    // 1) WAL에 먼저 기록 (durability 보장)
+    if let Some(wal) = &self.wal {
+        if let Err(e) = wal.append(&event) {
+            eprintln!("⚠️  WAL append failed: {}", e);
         }
     }
+    // 2) 브로드캐스트 (구독자 없으면 skip)
+    if self.tx.receiver_count() == 0 {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string(&event) {
+        let _ = self.tx.send(Arc::new(json));
+    }
+}
+
 
     // ========== Board ==========
 
