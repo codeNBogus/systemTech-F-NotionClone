@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::errors::AppError;
 use crate::models::*;
@@ -10,6 +10,8 @@ use crate::models::*;
 #[derive(Debug, Clone)]
 pub struct AppState {
     inner: Arc<RwLock<StoreInner>>,
+    /// WebSocket 브로드캐스트 채널 — write lock 안에서 send하여 이벤트 순서를 보장
+    tx: broadcast::Sender<Arc<String>>,
 }
 
 #[derive(Debug)]
@@ -21,12 +23,29 @@ struct StoreInner {
 
 impl AppState {
     pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(RwLock::new(StoreInner {
                 boards: HashMap::new(),
                 columns: HashMap::new(),
                 cards: HashMap::new(),
             })),
+            tx,
+        }
+    }
+
+    /// WS 클라이언트가 구독할 Receiver 반환
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<String>> {
+        self.tx.subscribe()
+    }
+
+    /// WsEvent를 JSON 직렬화하여 브로드캐스트 (sync — write lock 안에서 호출 가능)
+    fn emit(&self, event: WsEvent) {
+        if self.tx.receiver_count() == 0 {
+            return;
+        }
+        if let Ok(json) = serde_json::to_string(&event) {
+            let _ = self.tx.send(Arc::new(json));
         }
     }
 
@@ -55,7 +74,6 @@ impl AppState {
             .ok_or_else(|| AppError::BoardNotFound(board_id.to_string()))?
             .clone();
 
-        // 해당 보드의 컬럼 조회 (position 순)
         let mut columns: Vec<Column> = store
             .columns
             .values()
@@ -64,7 +82,6 @@ impl AppState {
             .collect();
         columns.sort_by_key(|c| c.position);
 
-        // 각 컬럼의 카드 조회 (position 순)
         let columns_with_cards: Vec<ColumnWithCards> = columns
             .into_iter()
             .map(|col| {
@@ -97,12 +114,10 @@ impl AppState {
     ) -> Result<Column, AppError> {
         let mut store = self.inner.write().await;
 
-        // 보드 존재 확인
         if !store.boards.contains_key(board_id) {
             return Err(AppError::BoardNotFound(board_id.to_string()));
         }
 
-        // 현재 컬럼 수를 기반으로 position 결정
         let max_pos = store
             .columns
             .values()
@@ -113,6 +128,7 @@ impl AppState {
 
         let column = Column::new(board_id.to_string(), title, max_pos + 1);
         store.columns.insert(column.id.clone(), column.clone());
+        self.emit(WsEvent::ColumnCreated { column: column.clone() });
         Ok(column)
     }
 
@@ -123,9 +139,8 @@ impl AppState {
             return Err(AppError::ColumnNotFound(column_id.to_string()));
         }
 
-        // 해당 컬럼의 모든 카드 삭제
         store.cards.retain(|_, card| card.column_id != column_id);
-
+        self.emit(WsEvent::ColumnDeleted { column_id: column_id.to_string() });
         Ok(())
     }
 
@@ -141,12 +156,10 @@ impl AppState {
     ) -> Result<Card, AppError> {
         let mut store = self.inner.write().await;
 
-        // 컬럼 존재 확인
         if !store.columns.contains_key(column_id) {
             return Err(AppError::ColumnNotFound(column_id.to_string()));
         }
 
-        // 현재 컬럼 내 최대 position 계산 → 충돌 없이 순서 부여
         let max_pos = store
             .cards
             .values()
@@ -157,6 +170,7 @@ impl AppState {
 
         let card = Card::new(column_id.to_string(), title, description, max_pos + 1);
         store.cards.insert(card.id.clone(), card.clone());
+        self.emit(WsEvent::CardCreated { card: card.clone() });
         Ok(card)
     }
 
@@ -183,7 +197,6 @@ impl AppState {
             .get_mut(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        // Optimistic Locking: 버전 비교
         if card.version != req.version {
             return Err(AppError::VersionConflict {
                 expected: req.version,
@@ -191,7 +204,6 @@ impl AppState {
             });
         }
 
-        // 변경된 필드 추적 (로그용)
         let mut changed = Vec::new();
         if let Some(ref title) = req.title {
             changed.push(format!("title → \"{}\"", title));
@@ -212,12 +224,11 @@ impl AppState {
             changed.join(", ")
         };
         card.push_log(ModificationOperation::Updated, detail);
-
+        self.emit(WsEvent::CardUpdated { card: card.clone() });
         Ok(card.clone())
     }
 
     /// 카드 상태 변경 - Optimistic Locking 적용
-    /// 미진행(Todo) / 진행중(InProgress) / 완료(Done) 간 전환
     pub async fn update_card_status(
         &self,
         card_id: &str,
@@ -230,7 +241,6 @@ impl AppState {
             .get_mut(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        // Optimistic Locking: 버전 비교
         if card.version != req.version {
             return Err(AppError::VersionConflict {
                 expected: req.version,
@@ -241,7 +251,7 @@ impl AppState {
         let detail = format!("status → {}", req.status);
         card.status = req.status;
         card.push_log(ModificationOperation::StatusChanged, detail);
-
+        self.emit(WsEvent::CardStatusChanged { card: card.clone() });
         Ok(card.clone())
     }
 
@@ -254,18 +264,17 @@ impl AppState {
             .remove(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        // 삭제된 카드보다 뒤에 있던 카드들의 position 재정렬
         for c in store.cards.values_mut() {
             if c.column_id == card.column_id && c.position > card.position {
                 c.position -= 1;
             }
         }
 
+        self.emit(WsEvent::CardDeleted { card_id: card.id });
         Ok(())
     }
 
     /// 카드 이동 (컬럼 간) - atomic 처리로 이동+삭제 동시 발생 방지
-    /// write lock 내에서 카드 존재 확인 → 이전 컬럼 재정렬 → 새 컬럼 삽입
     pub async fn move_card(
         &self,
         card_id: &str,
@@ -273,7 +282,6 @@ impl AppState {
     ) -> Result<Card, AppError> {
         let mut store = self.inner.write().await;
 
-        // 대상 컬럼 존재 확인
         if !store.columns.contains_key(&req.target_column_id) {
             return Err(AppError::ColumnNotFound(req.target_column_id.clone()));
         }
@@ -283,7 +291,6 @@ impl AppState {
             .get(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        // Optimistic Locking
         if card.version != req.version {
             return Err(AppError::VersionConflict {
                 expected: req.version,
@@ -294,14 +301,12 @@ impl AppState {
         let old_column_id = card.column_id.clone();
         let old_position = card.position;
 
-        // 이전 컬럼에서 position 재정렬
         for c in store.cards.values_mut() {
             if c.column_id == old_column_id && c.position > old_position && c.id != card_id {
                 c.position -= 1;
             }
         }
 
-        // 새 컬럼에서 삽입 위치 확보
         let target_pos = req.target_position;
         for c in store.cards.values_mut() {
             if c.column_id == req.target_column_id && c.position >= target_pos && c.id != card_id {
@@ -309,7 +314,6 @@ impl AppState {
             }
         }
 
-        // 카드 이동
         let card = store.cards.get_mut(card_id).unwrap();
         let detail = format!(
             "column {} → {}, position {} → {}",
@@ -318,7 +322,7 @@ impl AppState {
         card.column_id = req.target_column_id;
         card.position = target_pos;
         card.push_log(ModificationOperation::Moved, detail);
-
+        self.emit(WsEvent::CardMoved { card: card.clone() });
         Ok(card.clone())
     }
 
@@ -335,7 +339,6 @@ impl AppState {
             .get(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        // Optimistic Locking
         if card.version != req.version {
             return Err(AppError::VersionConflict {
                 expected: req.version,
@@ -351,9 +354,7 @@ impl AppState {
             return Ok(card.clone());
         }
 
-        // 같은 컬럼 내 카드들의 position 재정렬
         if new_pos > old_pos {
-            // 아래로 이동: old_pos < pos <= new_pos인 카드들을 -1
             for c in store.cards.values_mut() {
                 if c.column_id == column_id
                     && c.id != card_id
@@ -364,7 +365,6 @@ impl AppState {
                 }
             }
         } else {
-            // 위로 이동: new_pos <= pos < old_pos인 카드들을 +1
             for c in store.cards.values_mut() {
                 if c.column_id == column_id
                     && c.id != card_id
@@ -380,7 +380,7 @@ impl AppState {
         let detail = format!("position {} → {}", old_pos, new_pos);
         card.position = new_pos;
         card.push_log(ModificationOperation::Reordered, detail);
-
+        self.emit(WsEvent::CardReordered { card: card.clone() });
         Ok(card.clone())
     }
 

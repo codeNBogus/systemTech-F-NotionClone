@@ -181,6 +181,20 @@ pub struct ErrorResponse {
     pub code: String,
 }
 
+/// WebSocket 브로드캐스트 이벤트
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum WsEvent {
+    CardCreated { card: Card },
+    CardUpdated { card: Card },
+    CardDeleted { card_id: String },
+    CardMoved { card: Card },
+    CardStatusChanged { card: Card },
+    CardReordered { card: Card },
+    ColumnCreated { column: Column },
+    ColumnDeleted { column_id: String },
+}
+
 // === 팩토리 메서드 ===
 
 impl Board {

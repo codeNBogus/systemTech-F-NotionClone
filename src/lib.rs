@@ -2,6 +2,7 @@ pub mod errors;
 pub mod handlers;
 pub mod models;
 pub mod store;
+pub mod ws;
 
 pub use crate::store::AppState;
 
@@ -31,6 +32,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/api/cards/:card_id/status", patch(handlers::update_card_status))
         .route("/api/cards/:card_id/reorder", patch(handlers::reorder_card))
         .route("/api/cards/:card_id/logs", get(handlers::get_card_logs))
+        .route("/ws", get(ws::ws_handler))
         .fallback_service(ServeDir::new("static"))
         .layer(CorsLayer::permissive())
         .with_state(state)
