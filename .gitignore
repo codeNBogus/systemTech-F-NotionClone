@@ -13,3 +13,4 @@ slide-*.jpg
 
 # macOS
 .DS_Store
+/data/
