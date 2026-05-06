@@ -18,6 +18,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Board routes
         .route("/api/boards", get(handlers::list_boards).post(handlers::create_board))
         .route("/api/boards/:board_id/detail", get(handlers::get_board))
+        .route("/api/boards/:board_id/audit-logs", get(handlers::get_board_audit_logs))
         .route("/api/boards/:board_id/columns", post(handlers::create_column))
         .route("/api/boards/:board_id", delete(handlers::delete_board))
         // Column routes

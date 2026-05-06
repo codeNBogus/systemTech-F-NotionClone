@@ -27,6 +27,7 @@ Notion 및 Trello의 보드 기능을 참고하여 카드 생성/수정/삭제, 
 - 여러 사용자의 동시 접속
 - 동일 자원 동시 수정 처리
 - 변경 사항 실시간 반영
+- 사용자 닉네임 기반 작업자 구분
 
 ### 카드 수정 이력 로그 (추가 기능)
 - 카드 생성·수정·상태변경·이동·순서변경 시 자동으로 이력 기록
@@ -41,6 +42,17 @@ Notion 및 Trello의 보드 기능을 참고하여 카드 생성/수정/삭제, 
 - `emit()`을 write lock 안에서 호출하여 뮤테이션 순서 = 브로드캐스트 순서 보장
 - `/ws` 엔드포인트로 WebSocket 연결 (`ws://localhost:3000/ws`)
 - 클라이언트는 자동 재연결 로직(3초)을 갖추어 끊김 없는 동기화 제공
+- 이벤트 수신 시 현재 화면의 보드 데이터를 즉시 갱신하여, 다른 브라우저에서 수정한 내용이 새로고침 없이 반영
+- 카드 생성·수정·상태변경·삭제는 클라이언트 상태에 즉시 반영하고, 이동·정렬·컬럼 변경은 최신 보드 데이터를 재조회해 화면 일관성 유지
+
+### 사용자 닉네임 및 Audit Log (추가 기능)
+- 화면 상단의 `nickname` 입력값을 작업자 식별값으로 사용
+- 보드 생성 시 `owner_nickname`을 보드 정보에 저장
+- 보드·컬럼·카드 생성/수정/삭제/이동 작업마다 `actor_nickname`을 함께 전송
+- `GET /api/boards/:board_id/audit-logs` API로 보드별 감사 로그 조회 가능
+- 웹 UI의 `Audit Log` 버튼으로 현재 보드의 작업 이력 확인 가능
+- 감사 로그에는 작업자 닉네임, 작업 종류, 대상 종류, 시간(KST), 상세 내용 기록
+- 상태 복구용 `data/wal.jsonl`과 감사 로그용 `data/audit.jsonl`을 분리하여 저장소 상태와 보안 로그 역할을 명확히 분리
 
 #### 테스트 실행 방법
 
@@ -129,6 +141,8 @@ client 7: event order mismatch
 | **Torn-write 처리** | 마지막 라인이 손상돼도 panic 없이 정상 라인까지만 복원 |
 | **순서 보장** | WAL append → broadcast 순서로 emit, write lock 안에서 atomic 처리 |
 
+> 감사 로그는 WAL에 섞지 않고 `data/audit.jsonl`에 별도로 저장합니다. `wal.jsonl`은 보드/컬럼/카드 상태 복구 전용이고, `audit.jsonl`은 사용자 작업 추적 전용입니다.
+
 #### 검증 방법
 
 ```bash
@@ -152,10 +166,13 @@ cargo run
 - **메모리 저장소**: `Arc<RwLock<HashMap<...>>>` 기반 in-memory store
 - **영속성**: Write-Ahead Log (`data/wal.jsonl`) — append + fsync로 디스크 보존
 - **복원**: 서버 시작 시 WAL replay로 메모리 재구성
+- **감사 로그**: `data/audit.jsonl` — 사용자 닉네임과 작업 이력을 상태 저장소와 분리해 기록
 
 ### 클라이언트
 - HTML/CSS/JavaScript (Vanilla JS)
 - WebSocket 자동 재연결 클라이언트
+- WebSocket 이벤트 수신 시 현재 보드 UI 즉시 갱신
+- 닉네임 입력 및 Audit Log 조회 UI 제공
 - 캐시 방지 meta 태그 적용
 
 ## 🔒 동시성 및 Race Condition 분석 (핵심)
@@ -237,6 +254,15 @@ cargo run
 - API 엔드포인트 설계 및 라우팅 구조 수립 (RESTful 원칙 기반)
 - 공유 상태 관리 방식 결정 (`Arc<RwLock<...>>` 기반 메모리 저장소)
 
+## 👤 담당 역할 (이동열)
+
+**사용자 식별, 실시간 UI 반영, 감사 로그 분리 저장 구현**
+- 사용자 닉네임 입력 기능 구현 — 클라이언트에서 `nickname` 값을 관리하고 보드/컬럼/카드 변경 요청마다 `actor_nickname`으로 서버에 전달
+- Notion식 실시간 반영 개선 — WebSocket 이벤트 수신 시 새로고침이나 보드 재선택 없이 현재 화면의 카드 생성·수정·상태변경·삭제를 즉시 반영
+- 실시간 일관성 보완 — 카드 이동·정렬·컬럼 변경처럼 주변 position 정합성이 필요한 작업은 최신 보드 상태를 재조회해 화면 불일치 방지
+- 보드별 Audit Log 구현 — `AuditLog` 모델과 `GET /api/boards/:board_id/audit-logs` API를 추가하여 작업자, 작업 종류, 시간, 상세 내용을 조회 가능하게 구성
+- 상태 저장소와 감사 로그 분리 — 보드 상태 복구는 `data/wal.jsonl`, 사용자 작업 추적은 `data/audit.jsonl`에 저장하도록 역할 분리
+
 ## 👤 담당 역할 (이해성)
 
 **데이터 영속성 및 실시간 협업 인프라 구축**
@@ -249,7 +275,7 @@ cargo run
 
 | 이름 | 역할 |
 |------|------|
-| 이동열 |  |
+| 이동열 | 사용자 닉네임 식별 + Notion식 실시간 UI 반영 + Audit Log 분리 저장 |
 | 이재익 | PR: 시스템 아키텍처 설계 |
 | 이준서 |  |
 | 이해성 | WAL 영속성 + 보드 삭제 + 실시간 동기화 클라이언트 |

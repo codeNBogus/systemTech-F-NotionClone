@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::fmt;
 
+pub fn default_actor_nickname() -> String {
+    "anonymous".to_string()
+}
+
+pub fn normalize_actor(actor: Option<String>) -> String {
+    actor
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(default_actor_nickname)
+}
+
 mod kst_serde {
     use chrono::{DateTime, FixedOffset, Utc};
     use serde::{Deserializer, Serializer, Deserialize};
@@ -82,6 +93,8 @@ impl fmt::Display for CardStatus {
 pub struct Board {
     pub id: String,
     pub title: String,
+    #[serde(default = "default_actor_nickname")]
+    pub owner_nickname: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -113,16 +126,39 @@ pub struct Card {
     pub modification_logs: Vec<ModificationLog>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub id: String,
+    pub board_id: String,
+    pub actor_nickname: String,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: String,
+    #[serde(with = "kst_serde")]
+    pub timestamp: DateTime<Utc>,
+    pub detail: String,
+}
+
 // === Request / Response DTOs ===
 
 #[derive(Debug, Deserialize)]
 pub struct CreateBoardRequest {
     pub title: String,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActorRequest {
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateColumnRequest {
     pub title: String,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,6 +166,8 @@ pub struct CreateCardRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,12 +177,16 @@ pub struct UpdateCardRequest {
     pub status: Option<CardStatus>,
     /// 클라이언트가 보유한 버전 (Optimistic Locking)
     pub version: u64,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateCardStatusRequest {
     pub status: CardStatus,
     pub version: u64,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,12 +195,16 @@ pub struct MoveCardRequest {
     pub target_position: i32,
     /// 클라이언트가 보유한 버전 (Optimistic Locking)
     pub version: u64,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ReorderCardRequest {
     pub target_position: i32,
     pub version: u64,
+    #[serde(default)]
+    pub actor_nickname: Option<String>,
 }
 
 /// 보드 전체 조회 응답
@@ -187,6 +233,7 @@ pub struct ErrorResponse {
 pub enum WsEvent {
     BoardCreated { board: Board },
     BoardDeleted { board_id: String },
+    AuditLogged { log: AuditLog },
     CardCreated { card: Card },
     CardUpdated { card: Card },
     CardDeleted { card_id: String },
@@ -201,13 +248,36 @@ pub enum WsEvent {
 // === 팩토리 메서드 ===
 
 impl Board {
-    pub fn new(title: String) -> Self {
+    pub fn new(title: String, owner_nickname: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4().to_string(),
             title,
+            owner_nickname,
             created_at: now,
             updated_at: now,
+        }
+    }
+}
+
+impl AuditLog {
+    pub fn new(
+        board_id: String,
+        actor_nickname: String,
+        action: impl Into<String>,
+        target_type: impl Into<String>,
+        target_id: String,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            board_id,
+            actor_nickname,
+            action: action.into(),
+            target_type: target_type.into(),
+            target_id,
+            timestamp: Utc::now(),
+            detail: detail.into(),
         }
     }
 }

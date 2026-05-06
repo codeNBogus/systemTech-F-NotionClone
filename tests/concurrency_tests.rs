@@ -51,6 +51,7 @@ async fn test_concurrent_card_update_version_conflict() {
                     description: None,
                     status: None,
                     version: initial_version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -66,6 +67,7 @@ async fn test_concurrent_card_update_version_conflict() {
                     description: None,
                     status: None,
                     version: initial_version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -105,6 +107,7 @@ async fn test_sequential_card_updates_succeed() {
                 description: None,
                 status: None,
                 version: 1,
+                actor_nickname: None,
             },
         )
         .await
@@ -120,6 +123,7 @@ async fn test_sequential_card_updates_succeed() {
                 description: None,
                 status: None,
                 version: 2,
+                actor_nickname: None,
             },
         )
         .await
@@ -162,6 +166,7 @@ async fn test_concurrent_move_and_delete() {
                     target_column_id: target_col,
                     target_position: 0,
                     version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -261,6 +266,7 @@ async fn test_concurrent_reorder_version_conflict() {
                 ReorderCardRequest {
                     target_position: 0,
                     version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -274,6 +280,7 @@ async fn test_concurrent_reorder_version_conflict() {
                 ReorderCardRequest {
                     target_position: 4,
                     version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -334,6 +341,7 @@ async fn test_deleted_card_not_accessible() {
                 description: None,
                 status: None,
                 version: 1,
+                actor_nickname: None,
             },
         )
         .await
@@ -347,6 +355,7 @@ async fn test_deleted_card_not_accessible() {
                 target_column_id: "any".into(),
                 target_position: 0,
                 version: 1,
+                actor_nickname: None,
             },
         )
         .await
@@ -394,6 +403,7 @@ async fn test_move_card_position_integrity() {
                 target_column_id: col_b.id.clone(),
                 target_position: 1,
                 version: c1.version,
+                actor_nickname: None,
             },
         )
         .await
@@ -499,6 +509,7 @@ async fn test_card_status_transitions() {
             UpdateCardStatusRequest {
                 status: CardStatus::InProgress,
                 version: 1,
+                actor_nickname: None,
             },
         )
         .await
@@ -513,6 +524,7 @@ async fn test_card_status_transitions() {
             UpdateCardStatusRequest {
                 status: CardStatus::Done,
                 version: 2,
+                actor_nickname: None,
             },
         )
         .await
@@ -527,6 +539,7 @@ async fn test_card_status_transitions() {
             UpdateCardStatusRequest {
                 status: CardStatus::Todo,
                 version: 3,
+                actor_nickname: None,
             },
         )
         .await
@@ -555,6 +568,7 @@ async fn test_concurrent_status_update_version_conflict() {
                 UpdateCardStatusRequest {
                     status: CardStatus::InProgress,
                     version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -567,6 +581,7 @@ async fn test_concurrent_status_update_version_conflict() {
                 UpdateCardStatusRequest {
                     status: CardStatus::Done,
                     version,
+                    actor_nickname: None,
                 },
             )
             .await
@@ -601,6 +616,7 @@ async fn test_update_card_with_status_field() {
                 description: None,
                 status: Some(CardStatus::InProgress),
                 version: 1,
+                actor_nickname: None,
             },
         )
         .await

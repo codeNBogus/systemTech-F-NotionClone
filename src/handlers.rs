@@ -12,14 +12,17 @@ pub async fn create_board(
     State(state): State<AppState>,
     Json(req): Json<CreateBoardRequest>,
 ) -> Json<Board> {
-    let board = state.create_board(req.title).await;
+    let board = state.create_board_as(req.title, req.actor_nickname).await;
     Json(board)
 }
 pub async fn delete_board(
     State(state): State<AppState>,
     Path(board_id): Path<String>,
+    actor: Option<Json<ActorRequest>>,
 ) -> Result<StatusCode, AppError> {
-    state.delete_board(&board_id).await?;
+    state
+        .delete_board_as(&board_id, actor.and_then(|Json(req)| req.actor_nickname))
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -36,6 +39,14 @@ pub async fn get_board(
     Ok(Json(detail))
 }
 
+pub async fn get_board_audit_logs(
+    State(state): State<AppState>,
+    Path(board_id): Path<String>,
+) -> Result<Json<Vec<AuditLog>>, AppError> {
+    let logs = state.get_board_audit_logs(&board_id).await?;
+    Ok(Json(logs))
+}
+
 // ========== Column Handlers ==========
 
 pub async fn create_column(
@@ -43,15 +54,20 @@ pub async fn create_column(
     Path(board_id): Path<String>,
     Json(req): Json<CreateColumnRequest>,
 ) -> Result<Json<Column>, AppError> {
-    let column = state.create_column(&board_id, req.title).await?;
+    let column = state
+        .create_column_as(&board_id, req.title, req.actor_nickname)
+        .await?;
     Ok(Json(column))
 }
 
 pub async fn delete_column(
     State(state): State<AppState>,
     Path(column_id): Path<String>,
+    actor: Option<Json<ActorRequest>>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    state.delete_column(&column_id).await?;
+    state
+        .delete_column_as(&column_id, actor.and_then(|Json(req)| req.actor_nickname))
+        .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
@@ -63,7 +79,7 @@ pub async fn create_card(
     Json(req): Json<CreateCardRequest>,
 ) -> Result<Json<Card>, AppError> {
     let card = state
-        .create_card(&column_id, req.title, req.description)
+        .create_card_as(&column_id, req.title, req.description, req.actor_nickname)
         .await?;
     Ok(Json(card))
 }
@@ -88,8 +104,11 @@ pub async fn update_card(
 pub async fn delete_card(
     State(state): State<AppState>,
     Path(card_id): Path<String>,
+    actor: Option<Json<ActorRequest>>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    state.delete_card(&card_id).await?;
+    state
+        .delete_card_as(&card_id, actor.and_then(|Json(req)| req.actor_nickname))
+        .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

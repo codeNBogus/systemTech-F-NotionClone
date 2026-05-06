@@ -1,30 +1,35 @@
 use std::sync::Arc;
+
+use collab_board::models::WsEvent;
+use collab_board::wal::{AuditLogWriter, WalWriter};
 use collab_board::{create_router, AppState};
-use collab_board::wal::WalWriter;
 
 #[tokio::main]
 async fn main() {
-    // 1) WAL 파일 열기 (./data/wal.jsonl)
     let wal_path = "./data/wal.jsonl";
+    let audit_path = "./data/audit.jsonl";
 
-    // 2) 기존 WAL 파일에서 이벤트 replay
-    let events = WalWriter::replay(wal_path).expect("WAL replay 실패");
-    println!("📂 WAL replay: {} events loaded", events.len());
+    let events = WalWriter::replay(wal_path).expect("WAL replay failed");
+    println!("WAL replay: {} events loaded", events.len());
 
-    // 3) WAL 파일 열기 (append 모드)
-    let wal = Arc::new(
-        WalWriter::open(wal_path).expect("WAL 파일 열기 실패")
-    );
+    let mut audit_logs = AuditLogWriter::replay(audit_path).expect("audit replay failed");
+    audit_logs.extend(events.iter().filter_map(|event| match event {
+        WsEvent::AuditLogged { log } => Some(log.clone()),
+        _ => None,
+    }));
+    println!("Audit replay: {} logs loaded", audit_logs.len());
 
-    // 4) WAL과 함께 AppState 생성
-    let state = AppState::with_wal(wal);
+    let wal = Arc::new(WalWriter::open(wal_path).expect("WAL open failed"));
+    let audit_log = Arc::new(AuditLogWriter::open(audit_path).expect("audit log open failed"));
 
-    // 5) Replay된 이벤트를 state에 적용
+    let state = AppState::with_wal_and_audit(wal, Some(audit_log));
     state.apply_events(events).await;
+    state.apply_audit_logs(audit_logs).await;
 
-    // 6) 서버 실행
     let app = create_router(state);
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("🚀 Collab Board server running on http://localhost:3000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .unwrap();
+    println!("Collab Board server running on http://localhost:3000");
     axum::serve(listener, app).await.unwrap();
 }

@@ -594,10 +594,12 @@
     </div>
 
     <div class="board-bar">
+        <input type="text" id="actorNicknameInput" placeholder="nickname" style="max-width:140px">
         <select id="boardSelect" onchange="selectBoard(this.value)">
             <option value="">-- 보드 선택 --</option>
         </select>
         <button class="btn btn-primary btn-small" onclick="showCreateBoardModal()">+ 새 보드</button>
+        <button class="btn btn-secondary btn-small" onclick="showBoardAuditLogs()">Audit Log</button>
         <button onclick="deleteBoard()" class="btn-danger">🗑️ 보드 삭제</button>
     </div>
 
@@ -693,8 +695,27 @@
     <script>
         const API = '/api';
         let currentBoardId = null;
+        let currentBoardDetail = null;
         let draggedCardId = null;
         let draggedCardVersion = null;
+        let boardRefreshSeq = 0;
+        let boardListRefreshSeq = 0;
+
+        function getActorNickname() {
+            const input = document.getElementById('actorNicknameInput');
+            const nickname = input?.value?.trim() || 'anonymous';
+            localStorage.setItem('actorNickname', nickname);
+            return nickname;
+        }
+
+        function restoreActorNickname() {
+            const input = document.getElementById('actorNicknameInput');
+            if (!input) return;
+            input.value = localStorage.getItem('actorNickname') || '';
+            input.addEventListener('input', () => {
+                localStorage.setItem('actorNickname', input.value.trim());
+            });
+        }
 
         const STATUS_LABELS = {
             todo: '⏸ 미진행',
@@ -715,6 +736,7 @@
             const opts = {
                 method,
                 headers: { 'Content-Type': 'application/json' },
+                cache: 'no-store',
             };
             if (body) opts.body = JSON.stringify(body);
             const res = await fetch(API + path, opts);
@@ -755,7 +777,9 @@
         // ========== Board ==========
 
         async function loadBoards() {
+            const seq = ++boardListRefreshSeq;
             const boards = await api('GET', '/boards');
+            if (seq !== boardListRefreshSeq) return;
             const select = document.getElementById('boardSelect');
             select.innerHTML = '<option value="">-- 보드 선택 --</option>';
             boards.forEach(b => {
@@ -776,7 +800,7 @@
         async function createBoard() {
             const title = document.getElementById('boardTitleInput').value.trim();
             if (!title) return;
-            const board = await api('POST', '/boards', { title });
+            const board = await api('POST', '/boards', { title, actor_nickname: getActorNickname() });
             hideModal('createBoardModal');
             currentBoardId = board.id;
             await loadBoards();
@@ -803,7 +827,7 @@
             }
 
             try {
-                await api('DELETE', `/boards/${currentBoardId}`);
+                await api('DELETE', `/boards/${currentBoardId}`, { actor_nickname: getActorNickname() });
                 currentBoardId = null;
                 renderEmpty();
                 await loadBoards();
@@ -817,6 +841,7 @@
         async function selectBoard(boardId) {
             if (!boardId) {
                 currentBoardId = null;
+                currentBoardDetail = null;
                 renderEmpty();
                 return;
             }
@@ -826,13 +851,28 @@
 
         async function loadBoard() {
             if (!currentBoardId) return;
-            const detail = await api('GET', `/boards/${currentBoardId}/detail`);
-            renderBoard(detail);
+            const boardId = currentBoardId;
+            const seq = ++boardRefreshSeq;
+            try {
+                const detail = await api('GET', `/boards/${boardId}/detail`);
+                if (seq !== boardRefreshSeq || currentBoardId !== boardId) return;
+                renderBoard(detail);
+            } catch (e) {
+                if (currentBoardId === boardId && e.code === 'BOARD_NOT_FOUND') {
+                    currentBoardId = null;
+                    currentBoardDetail = null;
+                    renderEmpty();
+                    await loadBoards();
+                    return;
+                }
+                throw e;
+            }
         }
 
         // ========== Render ==========
 
         function renderEmpty() {
+            currentBoardDetail = null;
             document.getElementById('boardContainer').innerHTML = `
                 <div class="empty-state">
                     <h2>보드를 선택하세요</h2>
@@ -841,8 +881,17 @@
         }
 
         function renderBoard(detail) {
+            currentBoardDetail = detail;
             const container = document.getElementById('boardContainer');
             container.innerHTML = '';
+
+            const boardMeta = document.createElement('div');
+            boardMeta.className = 'empty-state';
+            boardMeta.style.marginRight = '16px';
+            boardMeta.innerHTML = `
+                <h2>${escHtml(detail.board.title)}</h2>
+                <p>owner: ${escHtml(detail.board.owner_nickname || 'anonymous')}</p>`;
+            container.appendChild(boardMeta);
 
             detail.columns.forEach(colData => {
                 const col = colData.column;
@@ -914,7 +963,7 @@
         async function createColumn() {
             const title = document.getElementById('columnTitleInput').value.trim();
             if (!title || !currentBoardId) return;
-            await api('POST', `/boards/${currentBoardId}/columns`, { title });
+            await api('POST', `/boards/${currentBoardId}/columns`, { title, actor_nickname: getActorNickname() });
             hideModal('createColumnModal');
             await loadBoard();
             showToast('컬럼이 추가되었습니다.');
@@ -922,7 +971,7 @@
 
         async function deleteColumn(columnId) {
             if (!confirm('이 컬럼과 모든 카드를 삭제하시겠습니까?')) return;
-            await api('DELETE', `/columns/${columnId}`);
+            await api('DELETE', `/columns/${columnId}`, { actor_nickname: getActorNickname() });
             await loadBoard();
             showToast('컬럼이 삭제되었습니다.');
         }
@@ -942,7 +991,7 @@
             const title = document.getElementById('cardTitleInput').value.trim();
             const description = document.getElementById('cardDescInput').value.trim();
             if (!title) return;
-            await api('POST', `/columns/${columnId}/cards`, { title, description });
+            await api('POST', `/columns/${columnId}/cards`, { title, description, actor_nickname: getActorNickname() });
             hideModal('createCardModal');
             await loadBoard();
             showToast('카드가 추가되었습니다.');
@@ -967,7 +1016,7 @@
             const status = document.getElementById('editCardStatusSelect').value;
             if (!title) return;
             try {
-                await api('PUT', `/cards/${cardId}`, { title, description, status, version });
+                await api('PUT', `/cards/${cardId}`, { title, description, status, version, actor_nickname: getActorNickname() });
                 hideModal('editCardModal');
                 await loadBoard();
                 showToast('카드가 수정되었습니다.');
@@ -981,7 +1030,7 @@
             event.stopPropagation();
             const nextStatus = STATUS_NEXT[currentStatus];
             try {
-                await api('PATCH', `/cards/${cardId}/status`, { status: nextStatus, version });
+                await api('PATCH', `/cards/${cardId}/status`, { status: nextStatus, version, actor_nickname: getActorNickname() });
                 await loadBoard();
                 showToast(`상태가 "${STATUS_LABELS[nextStatus]}"(으)로 변경되었습니다.`);
             } catch (e) {
@@ -992,7 +1041,7 @@
         async function deleteCard(cardId) {
             if (!confirm('이 카드를 삭제하시겠습니까?')) return;
             try {
-                await api('DELETE', `/cards/${cardId}`);
+                await api('DELETE', `/cards/${cardId}`, { actor_nickname: getActorNickname() });
                 await loadBoard();
                 showToast('카드가 삭제되었습니다.');
             } catch (e) {
@@ -1041,6 +1090,7 @@
                     target_column_id: targetColumnId,
                     target_position: targetPosition,
                     version: draggedCardVersion,
+                    actor_nickname: getActorNickname(),
                 });
                 await loadBoard();
                 showToast('카드가 이동되었습니다.');
@@ -1053,6 +1103,44 @@
         }
 
         // ========== Card Logs ==========
+
+        async function showBoardAuditLogs() {
+            if (!currentBoardId) {
+                showToast('보드를 먼저 선택하세요.', 'warning');
+                return;
+            }
+
+            document.getElementById('logCardTitle').textContent = 'Board audit log';
+            document.getElementById('logList').innerHTML = '<div style="color:#666; padding:8px;">Loading...</div>';
+            showModal('cardLogModal');
+
+            try {
+                const logs = await api('GET', `/boards/${currentBoardId}/audit-logs`);
+                const list = document.getElementById('logList');
+                if (!logs.length) {
+                    list.innerHTML = '<div style="color:#666; padding:8px;">No audit logs.</div>';
+                    return;
+                }
+
+                list.innerHTML = logs.slice().reverse().map(log => `
+                <div class="log-entry">
+                    <div class="log-timeline">
+                        <div class="log-dot log-dot-updated"></div>
+                        <div class="log-line"></div>
+                    </div>
+                    <div class="log-body">
+                        <div class="log-header">
+                            <span class="log-version">${escHtml(log.actor_nickname)}</span>
+                            <span class="log-op log-op-updated">${escHtml(log.action)}</span>
+                            <span class="log-time">${formatKST(log.timestamp)}</span>
+                        </div>
+                        <div class="log-detail">${escHtml(log.detail)}</div>
+                    </div>
+                </div>`).join('');
+            } catch (e) {
+                showToast('Audit log load failed: ' + (e.error || e.message || ''), 'error');
+            }
+        }
 
         const OP_LABELS = {
             created: '생성',
@@ -1108,6 +1196,100 @@
 
         // ========== WebSocket ==========
 
+        function boardHasColumn(columnId) {
+            return currentBoardDetail?.columns?.some(colData => colData.column.id === columnId);
+        }
+
+        function removeCardFromCurrentBoard(cardId) {
+            if (!currentBoardDetail) return false;
+            let removed = false;
+            currentBoardDetail.columns.forEach(colData => {
+                const before = colData.cards.length;
+                colData.cards = colData.cards.filter(card => card.id !== cardId);
+                removed = removed || before !== colData.cards.length;
+            });
+            return removed;
+        }
+
+        function upsertCardInCurrentBoard(card) {
+            if (!currentBoardDetail || !boardHasColumn(card.column_id)) return false;
+            removeCardFromCurrentBoard(card.id);
+            const target = currentBoardDetail.columns.find(colData => colData.column.id === card.column_id);
+            target.cards.push(card);
+            target.cards.sort((a, b) => a.position - b.position);
+            renderBoard(currentBoardDetail);
+            return true;
+        }
+
+        async function refreshVisibleBoard() {
+            if (!currentBoardId) return;
+            await loadBoard();
+        }
+
+        async function handleRealtimeEvent(raw) {
+            let msg;
+            try {
+                msg = JSON.parse(raw);
+            } catch (e) {
+                await refreshVisibleBoard();
+                await loadBoards();
+                return;
+            }
+
+            switch (msg.event) {
+                case 'audit_logged':
+                    return;
+
+                case 'board_created':
+                    await loadBoards();
+                    return;
+
+                case 'board_deleted':
+                    if (msg.board_id === currentBoardId) {
+                        currentBoardId = null;
+                        renderEmpty();
+                    }
+                    await loadBoards();
+                    return;
+
+                case 'column_created':
+                    if (msg.column?.board_id === currentBoardId) {
+                        await refreshVisibleBoard();
+                    }
+                    await loadBoards();
+                    return;
+
+                case 'column_deleted':
+                    if (currentBoardDetail?.columns?.some(colData => colData.column.id === msg.column_id)) {
+                        await refreshVisibleBoard();
+                    }
+                    return;
+
+                case 'card_created':
+                case 'card_updated':
+                case 'card_status_changed':
+                    if (!upsertCardInCurrentBoard(msg.card)) {
+                        await refreshVisibleBoard();
+                    }
+                    return;
+
+                case 'card_deleted':
+                    if (removeCardFromCurrentBoard(msg.card_id)) {
+                        renderBoard(currentBoardDetail);
+                    }
+                    return;
+
+                case 'card_moved':
+                case 'card_reordered':
+                    await refreshVisibleBoard();
+                    return;
+
+                default:
+                    await refreshVisibleBoard();
+                    await loadBoards();
+            }
+        }
+
         function connectWebSocket() {
             const ws = new WebSocket(`ws://${location.host}/ws`);
 
@@ -1116,6 +1298,10 @@
             };
 
             ws.onmessage = (event) => {
+                handleRealtimeEvent(event.data).catch(e => {
+                    console.error('Realtime refresh failed:', e);
+                });
+                return;
                 console.log('📨 이벤트 수신:', event.data);
                 // 현재 보드를 보고 있을 때만 새로고침
                 if (currentBoardId) {
@@ -1136,6 +1322,7 @@
         }
 
         // ========== Init ==========
+        restoreActorNickname();
         loadBoards();
         connectWebSocket();
 

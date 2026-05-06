@@ -1,17 +1,16 @@
 //! Write-Ahead Log: 모든 상태 변경 이벤트를 파일에 append-only로 기록하고
 //! 서버 시작 시 replay하여 메모리 상태를 복구한다.
 
-use crate::models::WsEvent;
+use crate::models::{AuditLog, WsEvent};
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 /// WAL 파일에 이벤트를 append하는 writer.
 /// 내부적으로 Mutex<File>로 동시 write 방지.
 pub struct WalWriter {
     file: Mutex<File>,
-    path: PathBuf,
 }
 
 impl WalWriter {
@@ -28,7 +27,6 @@ impl WalWriter {
             .open(&path)?;
         Ok(Self {
             file: Mutex::new(file),
-            path,
         })
     }
 
@@ -71,5 +69,62 @@ impl WalWriter {
             }
         }
         Ok(events)
+    }
+}
+
+pub struct AuditLogWriter {
+    file: Mutex<File>,
+}
+
+impl AuditLogWriter {
+    pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        Ok(Self {
+            file: Mutex::new(file),
+        })
+    }
+
+    pub fn append(&self, log: &AuditLog) -> std::io::Result<()> {
+        let json = serde_json::to_string(log)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut file = self.file.lock().unwrap();
+        writeln!(file, "{}", json)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    pub fn replay<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<AuditLog>> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut logs = Vec::new();
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<AuditLog>(&line) {
+                Ok(log) => logs.push(log),
+                Err(e) => {
+                    eprintln!(
+                        "Audit replay: line {} corrupted, stopping replay: {}",
+                        idx + 1,
+                        e
+                    );
+                    break;
+                }
+            }
+        }
+        Ok(logs)
     }
 }

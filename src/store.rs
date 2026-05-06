@@ -1,4 +1,4 @@
-use crate::wal::WalWriter;
+use crate::wal::{AuditLogWriter, WalWriter};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -15,6 +15,7 @@ pub struct AppState {
     tx: broadcast::Sender<Arc<String>>,
     /// Write-Ahead Log (선택적) — Some이면 모든 이벤트를 디스크에 기록
     wal: Option<Arc<WalWriter>>,
+    audit_log: Option<Arc<AuditLogWriter>>,
 }
 
 #[derive(Debug)]
@@ -22,6 +23,7 @@ struct StoreInner {
     boards: HashMap<String, Board>,
     columns: HashMap<String, Column>,
     cards: HashMap<String, Card>,
+    audit_logs: HashMap<String, Vec<AuditLog>>,
 }
 
 impl AppState {
@@ -33,23 +35,34 @@ impl AppState {
                 boards: HashMap::new(),
                 columns: HashMap::new(),
                 cards: HashMap::new(),
+                audit_logs: HashMap::new(),
             })),
             tx,
             wal: None,
+            audit_log: None,
         }
     }
 
     /// WAL과 함께 생성 (프로덕션용)
     pub fn with_wal(wal: Arc<WalWriter>) -> Self {
+        Self::with_wal_and_audit(wal, None)
+    }
+
+    pub fn with_wal_and_audit(
+        wal: Arc<WalWriter>,
+        audit_log: Option<Arc<AuditLogWriter>>,
+    ) -> Self {
         let (tx, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(RwLock::new(StoreInner {
                 boards: HashMap::new(),
                 columns: HashMap::new(),
                 cards: HashMap::new(),
+                audit_logs: HashMap::new(),
             })),
             tx,
             wal: Some(wal),
+            audit_log,
         }
     }
 
@@ -77,6 +90,7 @@ impl AppState {
                         .cards
                         .retain(|_, c| !deleted_column_ids.contains(&c.column_id));
                 }
+                WsEvent::AuditLogged { .. } => {}
 
                 WsEvent::ColumnCreated { column } => {
                     store.columns.insert(column.id.clone(), column);
@@ -96,6 +110,17 @@ impl AppState {
                     store.cards.remove(&card_id);
                 }
             }
+        }
+    }
+
+    pub async fn apply_audit_logs(&self, logs: Vec<AuditLog>) {
+        let mut store = self.inner.write().await;
+        for log in logs {
+            store
+                .audit_logs
+                .entry(log.board_id.clone())
+                .or_default()
+                .push(log);
         }
     }
 
@@ -121,15 +146,44 @@ impl AppState {
         }
     }
 
+    fn record_audit(&self, store: &mut StoreInner, log: AuditLog) {
+        store
+            .audit_logs
+            .entry(log.board_id.clone())
+            .or_default()
+            .push(log.clone());
+        if let Some(audit_log) = &self.audit_log {
+            if let Err(e) = audit_log.append(&log) {
+                eprintln!("Audit log append failed: {}", e);
+            }
+        }
+    }
+
     // ========== Board ==========
 
     pub async fn create_board(&self, title: String) -> Board {
-        let board = Board::new(title);
+        self.create_board_as(title, None).await
+    }
+
+    pub async fn create_board_as(&self, title: String, actor_nickname: Option<String>) -> Board {
+        let actor = normalize_actor(actor_nickname);
+        let board = Board::new(title, actor.clone());
         let mut store = self.inner.write().await;
         store.boards.insert(board.id.clone(), board.clone());
         self.emit(WsEvent::BoardCreated {
             board: board.clone(),
         });
+        self.record_audit(
+            &mut store,
+            AuditLog::new(
+                board.id.clone(),
+                actor,
+                "board_created",
+                "board",
+                board.id.clone(),
+                format!("board \"{}\" created", board.title),
+            ),
+        );
         board
     }
 
@@ -180,6 +234,16 @@ impl AppState {
     // ========== Column ==========
 
     pub async fn create_column(&self, board_id: &str, title: String) -> Result<Column, AppError> {
+        self.create_column_as(board_id, title, None).await
+    }
+
+    pub async fn create_column_as(
+        &self,
+        board_id: &str,
+        title: String,
+        actor_nickname: Option<String>,
+    ) -> Result<Column, AppError> {
+        let actor = normalize_actor(actor_nickname);
         let mut store = self.inner.write().await;
 
         if !store.boards.contains_key(board_id) {
@@ -199,16 +263,38 @@ impl AppState {
         self.emit(WsEvent::ColumnCreated {
             column: column.clone(),
         });
+        self.record_audit(
+            &mut store,
+            AuditLog::new(
+                board_id.to_string(),
+                actor,
+                "column_created",
+                "column",
+                column.id.clone(),
+                format!("column \"{}\" created", column.title),
+            ),
+        );
         Ok(column)
     }
 
     /// 보드 삭제 - 보드에 속한 모든 컬럼과 카드도 함께 삭제 (cascade)
     pub async fn delete_board(&self, board_id: &str) -> Result<(), AppError> {
+        self.delete_board_as(board_id, None).await
+    }
+
+    pub async fn delete_board_as(
+        &self,
+        board_id: &str,
+        actor_nickname: Option<String>,
+    ) -> Result<(), AppError> {
+        let actor = normalize_actor(actor_nickname);
         let mut store = self.inner.write().await;
 
-        if !store.boards.contains_key(board_id) {
-            return Err(AppError::BoardNotFound(board_id.to_string()));
-        }
+        let board = store
+            .boards
+            .get(board_id)
+            .ok_or_else(|| AppError::BoardNotFound(board_id.to_string()))?
+            .clone();
 
         // 삭제할 컬럼 ID들을 먼저 수집 (borrow checker 회피)
         let deleted_column_ids: Vec<String> = store
@@ -230,20 +316,52 @@ impl AppState {
         self.emit(WsEvent::BoardDeleted {
             board_id: board_id.to_string(),
         });
+        self.record_audit(
+            &mut store,
+            AuditLog::new(
+                board_id.to_string(),
+                actor,
+                "board_deleted",
+                "board",
+                board_id.to_string(),
+                format!("board \"{}\" deleted", board.title),
+            ),
+        );
         Ok(())
     }
 
     pub async fn delete_column(&self, column_id: &str) -> Result<(), AppError> {
+        self.delete_column_as(column_id, None).await
+    }
+
+    pub async fn delete_column_as(
+        &self,
+        column_id: &str,
+        actor_nickname: Option<String>,
+    ) -> Result<(), AppError> {
+        let actor = normalize_actor(actor_nickname);
         let mut store = self.inner.write().await;
 
-        if store.columns.remove(column_id).is_none() {
-            return Err(AppError::ColumnNotFound(column_id.to_string()));
-        }
+        let column = store
+            .columns
+            .remove(column_id)
+            .ok_or_else(|| AppError::ColumnNotFound(column_id.to_string()))?;
 
         store.cards.retain(|_, card| card.column_id != column_id);
         self.emit(WsEvent::ColumnDeleted {
             column_id: column_id.to_string(),
         });
+        self.record_audit(
+            &mut store,
+            AuditLog::new(
+                column.board_id,
+                actor,
+                "column_deleted",
+                "column",
+                column_id.to_string(),
+                format!("column \"{}\" deleted", column.title),
+            ),
+        );
         Ok(())
     }
 
@@ -257,11 +375,25 @@ impl AppState {
         title: String,
         description: String,
     ) -> Result<Card, AppError> {
+        self.create_card_as(column_id, title, description, None).await
+    }
+
+    pub async fn create_card_as(
+        &self,
+        column_id: &str,
+        title: String,
+        description: String,
+        actor_nickname: Option<String>,
+    ) -> Result<Card, AppError> {
+        let actor = normalize_actor(actor_nickname);
         let mut store = self.inner.write().await;
 
-        if !store.columns.contains_key(column_id) {
-            return Err(AppError::ColumnNotFound(column_id.to_string()));
-        }
+        let board_id = store
+            .columns
+            .get(column_id)
+            .ok_or_else(|| AppError::ColumnNotFound(column_id.to_string()))?
+            .board_id
+            .clone();
 
         let max_pos = store
             .cards
@@ -274,6 +406,17 @@ impl AppState {
         let card = Card::new(column_id.to_string(), title, description, max_pos + 1);
         store.cards.insert(card.id.clone(), card.clone());
         self.emit(WsEvent::CardCreated { card: card.clone() });
+        self.record_audit(
+            &mut store,
+            AuditLog::new(
+                board_id,
+                actor,
+                "card_created",
+                "card",
+                card.id.clone(),
+                format!("card \"{}\" created", card.title),
+            ),
+        );
         Ok(card)
     }
 
@@ -293,6 +436,7 @@ impl AppState {
         card_id: &str,
         req: UpdateCardRequest,
     ) -> Result<Card, AppError> {
+        let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
         let card = store
@@ -327,8 +471,29 @@ impl AppState {
             changed.join(", ")
         };
         card.push_log(ModificationOperation::Updated, detail);
-        self.emit(WsEvent::CardUpdated { card: card.clone() });
-        Ok(card.clone())
+        let updated_card = card.clone();
+        let board_id = store
+            .columns
+            .get(&updated_card.column_id)
+            .map(|column| column.board_id.clone())
+            .unwrap_or_default();
+        self.emit(WsEvent::CardUpdated {
+            card: updated_card.clone(),
+        });
+        if !board_id.is_empty() {
+            self.record_audit(
+                &mut store,
+                AuditLog::new(
+                    board_id,
+                    actor,
+                    "card_updated",
+                    "card",
+                    updated_card.id.clone(),
+                    format!("card \"{}\" updated", updated_card.title),
+                ),
+            );
+        }
+        Ok(updated_card)
     }
 
     /// 카드 상태 변경 - Optimistic Locking 적용
@@ -337,6 +502,7 @@ impl AppState {
         card_id: &str,
         req: UpdateCardStatusRequest,
     ) -> Result<Card, AppError> {
+        let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
         let card = store
@@ -354,18 +520,53 @@ impl AppState {
         let detail = format!("status → {}", req.status);
         card.status = req.status;
         card.push_log(ModificationOperation::StatusChanged, detail);
-        self.emit(WsEvent::CardStatusChanged { card: card.clone() });
-        Ok(card.clone())
+        let updated_card = card.clone();
+        let board_id = store
+            .columns
+            .get(&updated_card.column_id)
+            .map(|column| column.board_id.clone())
+            .unwrap_or_default();
+        self.emit(WsEvent::CardStatusChanged {
+            card: updated_card.clone(),
+        });
+        if !board_id.is_empty() {
+            self.record_audit(
+                &mut store,
+                AuditLog::new(
+                    board_id,
+                    actor,
+                    "card_status_changed",
+                    "card",
+                    updated_card.id.clone(),
+                    format!("card \"{}\" status changed", updated_card.title),
+                ),
+            );
+        }
+        Ok(updated_card)
     }
 
     /// 카드 삭제 - 삭제 후 같은 컬럼 내 position 재정렬
     pub async fn delete_card(&self, card_id: &str) -> Result<(), AppError> {
+        self.delete_card_as(card_id, None).await
+    }
+
+    pub async fn delete_card_as(
+        &self,
+        card_id: &str,
+        actor_nickname: Option<String>,
+    ) -> Result<(), AppError> {
+        let actor = normalize_actor(actor_nickname);
         let mut store = self.inner.write().await;
 
         let card = store
             .cards
             .remove(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
+        let board_id = store
+            .columns
+            .get(&card.column_id)
+            .map(|column| column.board_id.clone())
+            .unwrap_or_default();
 
         for c in store.cards.values_mut() {
             if c.column_id == card.column_id && c.position > card.position {
@@ -373,12 +574,28 @@ impl AppState {
             }
         }
 
-        self.emit(WsEvent::CardDeleted { card_id: card.id });
+        self.emit(WsEvent::CardDeleted {
+            card_id: card.id.clone(),
+        });
+        if !board_id.is_empty() {
+            self.record_audit(
+                &mut store,
+                AuditLog::new(
+                    board_id,
+                    actor,
+                    "card_deleted",
+                    "card",
+                    card.id.clone(),
+                    format!("card \"{}\" deleted", card.title),
+                ),
+            );
+        }
         Ok(())
     }
 
     /// 카드 이동 (컬럼 간) - atomic 처리로 이동+삭제 동시 발생 방지
     pub async fn move_card(&self, card_id: &str, req: MoveCardRequest) -> Result<Card, AppError> {
+        let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
         if !store.columns.contains_key(&req.target_column_id) {
@@ -421,8 +638,29 @@ impl AppState {
         card.column_id = req.target_column_id;
         card.position = target_pos;
         card.push_log(ModificationOperation::Moved, detail);
-        self.emit(WsEvent::CardMoved { card: card.clone() });
-        Ok(card.clone())
+        let updated_card = card.clone();
+        let board_id = store
+            .columns
+            .get(&updated_card.column_id)
+            .map(|column| column.board_id.clone())
+            .unwrap_or_default();
+        self.emit(WsEvent::CardMoved {
+            card: updated_card.clone(),
+        });
+        if !board_id.is_empty() {
+            self.record_audit(
+                &mut store,
+                AuditLog::new(
+                    board_id,
+                    actor,
+                    "card_moved",
+                    "card",
+                    updated_card.id.clone(),
+                    format!("card \"{}\" moved", updated_card.title),
+                ),
+            );
+        }
+        Ok(updated_card)
     }
 
     /// 카드 순서 변경 (같은 컬럼 내) - atomic 처리
@@ -431,6 +669,7 @@ impl AppState {
         card_id: &str,
         req: ReorderCardRequest,
     ) -> Result<Card, AppError> {
+        let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
         let card = store
@@ -479,8 +718,29 @@ impl AppState {
         let detail = format!("position {} → {}", old_pos, new_pos);
         card.position = new_pos;
         card.push_log(ModificationOperation::Reordered, detail);
-        self.emit(WsEvent::CardReordered { card: card.clone() });
-        Ok(card.clone())
+        let updated_card = card.clone();
+        let board_id = store
+            .columns
+            .get(&updated_card.column_id)
+            .map(|column| column.board_id.clone())
+            .unwrap_or_default();
+        self.emit(WsEvent::CardReordered {
+            card: updated_card.clone(),
+        });
+        if !board_id.is_empty() {
+            self.record_audit(
+                &mut store,
+                AuditLog::new(
+                    board_id,
+                    actor,
+                    "card_reordered",
+                    "card",
+                    updated_card.id.clone(),
+                    format!("card \"{}\" reordered", updated_card.title),
+                ),
+            );
+        }
+        Ok(updated_card)
     }
 
     pub async fn get_card_logs(&self, card_id: &str) -> Result<Vec<ModificationLog>, AppError> {
@@ -490,5 +750,17 @@ impl AppState {
             .get(card_id)
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
         Ok(card.modification_logs.clone())
+    }
+
+    pub async fn get_board_audit_logs(&self, board_id: &str) -> Result<Vec<AuditLog>, AppError> {
+        let store = self.inner.read().await;
+        if !store.boards.contains_key(board_id) {
+            return Err(AppError::BoardNotFound(board_id.to_string()));
+        }
+        Ok(store
+            .audit_logs
+            .get(board_id)
+            .cloned()
+            .unwrap_or_default())
     }
 }
