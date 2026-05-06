@@ -3,6 +3,7 @@ pub mod handlers;
 pub mod models;
 pub mod store;
 pub mod ws;
+pub mod wal;
 
 pub use crate::store::AppState;
 

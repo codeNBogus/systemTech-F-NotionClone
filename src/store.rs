@@ -1,8 +1,7 @@
+use crate::wal::WalWriter;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use crate::wal::WalWriter;
-
 
 use crate::errors::AppError;
 use crate::models::*;
@@ -17,7 +16,6 @@ pub struct AppState {
     /// Write-Ahead Log (선택적) — Some이면 모든 이벤트를 디스크에 기록
     wal: Option<Arc<WalWriter>>,
 }
-
 
 #[derive(Debug)]
 struct StoreInner {
@@ -55,6 +53,51 @@ impl AppState {
         }
     }
 
+    /// WAL replay된 이벤트들을 순서대로 메모리에 적용
+    pub async fn apply_events(&self, events: Vec<WsEvent>) {
+        let mut store = self.inner.write().await;
+        for event in events {
+            match event {
+                WsEvent::BoardCreated { board } => {
+                    store.boards.insert(board.id.clone(), board);
+                }
+                WsEvent::BoardDeleted { board_id } => {
+                    store.boards.remove(&board_id);
+                    // 삭제된 보드의 컬럼 ID들을 먼저 수집
+                    let deleted_column_ids: Vec<String> = store
+                        .columns
+                        .values()
+                        .filter(|c| c.board_id == board_id)
+                        .map(|c| c.id.clone())
+                        .collect();
+                    // 그 컬럼들 제거
+                    store.columns.retain(|_, c| c.board_id != board_id);
+                    // 그 컬럼에 속한 카드들도 제거
+                    store
+                        .cards
+                        .retain(|_, c| !deleted_column_ids.contains(&c.column_id));
+                }
+
+                WsEvent::ColumnCreated { column } => {
+                    store.columns.insert(column.id.clone(), column);
+                }
+                WsEvent::ColumnDeleted { column_id } => {
+                    store.columns.remove(&column_id);
+                    store.cards.retain(|_, c| c.column_id != column_id);
+                }
+                WsEvent::CardCreated { card }
+                | WsEvent::CardUpdated { card }
+                | WsEvent::CardMoved { card }
+                | WsEvent::CardStatusChanged { card }
+                | WsEvent::CardReordered { card } => {
+                    store.cards.insert(card.id.clone(), card);
+                }
+                WsEvent::CardDeleted { card_id } => {
+                    store.cards.remove(&card_id);
+                }
+            }
+        }
+    }
 
     /// WS 클라이언트가 구독할 Receiver 반환
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<String>> {
@@ -62,22 +105,21 @@ impl AppState {
     }
 
     /// WsEvent를 JSON 직렬화하여 브로드캐스트 (sync — write lock 안에서 호출 가능)
- fn emit(&self, event: WsEvent) {
-    // 1) WAL에 먼저 기록 (durability 보장)
-    if let Some(wal) = &self.wal {
-        if let Err(e) = wal.append(&event) {
-            eprintln!("⚠️  WAL append failed: {}", e);
+    fn emit(&self, event: WsEvent) {
+        // 1) WAL에 먼저 기록 (durability 보장)
+        if let Some(wal) = &self.wal {
+            if let Err(e) = wal.append(&event) {
+                eprintln!("⚠️  WAL append failed: {}", e);
+            }
+        }
+        // 2) 브로드캐스트 (구독자 없으면 skip)
+        if self.tx.receiver_count() == 0 {
+            return;
+        }
+        if let Ok(json) = serde_json::to_string(&event) {
+            let _ = self.tx.send(Arc::new(json));
         }
     }
-    // 2) 브로드캐스트 (구독자 없으면 skip)
-    if self.tx.receiver_count() == 0 {
-        return;
-    }
-    if let Ok(json) = serde_json::to_string(&event) {
-        let _ = self.tx.send(Arc::new(json));
-    }
-}
-
 
     // ========== Board ==========
 
@@ -85,6 +127,9 @@ impl AppState {
         let board = Board::new(title);
         let mut store = self.inner.write().await;
         store.boards.insert(board.id.clone(), board.clone());
+        self.emit(WsEvent::BoardCreated {
+            board: board.clone(),
+        });
         board
     }
 
@@ -122,10 +167,7 @@ impl AppState {
                     .cloned()
                     .collect();
                 cards.sort_by_key(|c| c.position);
-                ColumnWithCards {
-                    column: col,
-                    cards,
-                }
+                ColumnWithCards { column: col, cards }
             })
             .collect();
 
@@ -137,11 +179,7 @@ impl AppState {
 
     // ========== Column ==========
 
-    pub async fn create_column(
-        &self,
-        board_id: &str,
-        title: String,
-    ) -> Result<Column, AppError> {
+    pub async fn create_column(&self, board_id: &str, title: String) -> Result<Column, AppError> {
         let mut store = self.inner.write().await;
 
         if !store.boards.contains_key(board_id) {
@@ -158,7 +196,9 @@ impl AppState {
 
         let column = Column::new(board_id.to_string(), title, max_pos + 1);
         store.columns.insert(column.id.clone(), column.clone());
-        self.emit(WsEvent::ColumnCreated { column: column.clone() });
+        self.emit(WsEvent::ColumnCreated {
+            column: column.clone(),
+        });
         Ok(column)
     }
 
@@ -170,7 +210,9 @@ impl AppState {
         }
 
         store.cards.retain(|_, card| card.column_id != column_id);
-        self.emit(WsEvent::ColumnDeleted { column_id: column_id.to_string() });
+        self.emit(WsEvent::ColumnDeleted {
+            column_id: column_id.to_string(),
+        });
         Ok(())
     }
 
@@ -305,11 +347,7 @@ impl AppState {
     }
 
     /// 카드 이동 (컬럼 간) - atomic 처리로 이동+삭제 동시 발생 방지
-    pub async fn move_card(
-        &self,
-        card_id: &str,
-        req: MoveCardRequest,
-    ) -> Result<Card, AppError> {
+    pub async fn move_card(&self, card_id: &str, req: MoveCardRequest) -> Result<Card, AppError> {
         let mut store = self.inner.write().await;
 
         if !store.columns.contains_key(&req.target_column_id) {
