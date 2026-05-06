@@ -784,6 +784,36 @@
             showToast('보드가 생성되었습니다.');
         }
 
+        async function deleteBoard() {
+            if (!currentBoardId) {
+                showToast('삭제할 보드를 선택하세요', 'warning');
+                return;
+            }
+
+            let boardTitle = '이 보드';
+            try {
+                const detail = await api('GET', `/boards/${currentBoardId}/detail`);
+                boardTitle = detail?.board?.title || '이 보드';
+            } catch (e) {
+                // 제목 못 가져와도 삭제는 진행
+            }
+
+            if (!confirm(`"${boardTitle}"을(를) 정말 삭제하시겠습니까?\n모든 컬럼과 카드가 함께 삭제됩니다.`)) {
+                return;
+            }
+
+            try {
+                await api('DELETE', `/boards/${currentBoardId}`);
+                currentBoardId = null;
+                renderEmpty();
+                await loadBoards();
+                showToast('보드가 삭제되었습니다.', 'success');
+            } catch (e) {
+                showToast('보드 삭제 실패: ' + (e.error || e.message || ''), 'error');
+            }
+        }
+
+
         async function selectBoard(boardId) {
             if (!boardId) {
                 currentBoardId = null;
@@ -970,27 +1000,7 @@
             }
         }
 
-        async function deleteBoard() {
-            if (!currentBoardId) {
-                showToast('삭제할 보드를 선택하세요', 'warning');
-                return;
-            }
-            const board = await apiCall(`/api/boards/${currentBoardId}/detail`, 'GET').catch(() => null);
-            const boardTitle = board?.board?.title || '이 보드';
 
-            if (!confirm(`"${boardTitle}"을(를) 정말 삭제하시겠습니까?\n모든 컬럼과 카드가 함께 삭제됩니다.`)) {
-                return;
-            }
-            try {
-                await apiCall(`/api/boards/${currentBoardId}`, 'DELETE');
-                showToast('보드가 삭제되었습니다', 'success');
-                currentBoardId = null;
-                document.getElementById('board-container').innerHTML = '';
-                await loadBoards();
-            } catch (e) {
-                showToast('보드 삭제 실패: ' + e.message, 'error');
-            }
-        }
 
 
         // ========== Drag & Drop ==========
