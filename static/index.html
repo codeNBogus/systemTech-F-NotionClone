@@ -339,6 +339,93 @@
             color: #888;
             margin-bottom: 4px;
         }
+
+        /* Log modal */
+        .log-modal {
+            min-width: 480px;
+            max-width: 560px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .log-list {
+            overflow-y: auto;
+            flex: 1;
+            margin-top: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+        .log-entry {
+            display: flex;
+            gap: 12px;
+            padding: 10px 4px;
+            border-bottom: 1px solid #2a2a4a;
+            position: relative;
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-timeline {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 32px;
+            flex-shrink: 0;
+        }
+        .log-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-top: 3px;
+            flex-shrink: 0;
+        }
+        .log-dot-created  { background: #4aff8a; }
+        .log-dot-updated  { background: #7c83ff; }
+        .log-dot-status_changed { background: #4a9eff; }
+        .log-dot-moved    { background: #ffd77d; }
+        .log-dot-reordered { background: #ff9f7d; }
+        .log-line {
+            width: 1px;
+            flex: 1;
+            background: #2a2a4a;
+            margin-top: 4px;
+        }
+        .log-entry:last-child .log-line { display: none; }
+        .log-body { flex: 1; }
+        .log-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+        }
+        .log-version {
+            background: #2a2a4a;
+            color: #a0a0c0;
+            padding: 1px 7px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .log-op {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 1px 7px;
+            border-radius: 4px;
+        }
+        .log-op-created  { background: #2d5a3d; color: #4aff8a; }
+        .log-op-updated  { background: #2a2a5a; color: #a0a8ff; }
+        .log-op-status_changed { background: #1e3a5a; color: #4a9eff; }
+        .log-op-moved    { background: #5a4a1e; color: #ffd77d; }
+        .log-op-reordered { background: #5a3a1e; color: #ff9f7d; }
+        .log-time {
+            font-size: 11px;
+            color: #666;
+            margin-left: auto;
+        }
+        .log-detail {
+            font-size: 12px;
+            color: #999;
+            font-family: 'Courier New', monospace;
+        }
     </style>
 </head>
 <body>
@@ -404,6 +491,18 @@
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="hideModal('createCardModal')">취소</button>
                 <button class="btn btn-primary" onclick="createCard()">추가</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Card Log Modal -->
+    <div id="cardLogModal" class="modal-overlay" onclick="closeModal(event, 'cardLogModal')">
+        <div class="modal log-modal" onclick="event.stopPropagation()">
+            <h2>📋 수정 이력</h2>
+            <div id="logCardTitle" style="font-size:13px; color:#888; margin-bottom:8px;"></div>
+            <div class="log-list" id="logList"></div>
+            <div class="modal-actions" style="margin-top:12px;">
+                <button class="btn btn-secondary" onclick="hideModal('cardLogModal')">닫기</button>
             </div>
         </div>
     </div>
@@ -599,6 +698,7 @@
                      ondragstart="onDragStart(event, '${card.id}', ${card.version})"
                      ondragend="onDragEnd(event)">
                     <div class="card-actions">
+                        <button class="btn btn-secondary btn-small" onclick="showCardLogs('${card.id}', '${escHtml(card.title)}')">🕐</button>
                         <button class="btn btn-secondary btn-small" onclick="showEditCardModal('${card.id}')">✎</button>
                         <button class="btn btn-danger btn-small" onclick="deleteCard('${card.id}')">✕</button>
                     </div>
@@ -757,6 +857,60 @@
 
             draggedCardId = null;
             draggedCardVersion = null;
+        }
+
+        // ========== Card Logs ==========
+
+        const OP_LABELS = {
+            created:       '생성',
+            updated:       '수정',
+            status_changed:'상태변경',
+            moved:         '이동',
+            reordered:     '순서변경',
+        };
+
+        async function showCardLogs(cardId, cardTitle) {
+            document.getElementById('logCardTitle').textContent = cardTitle;
+            document.getElementById('logList').innerHTML = '<div style="color:#666; padding:8px;">불러오는 중...</div>';
+            showModal('cardLogModal');
+
+            const logs = await api('GET', `/cards/${cardId}/logs`);
+            const list = document.getElementById('logList');
+
+            if (!logs.length) {
+                list.innerHTML = '<div style="color:#666; padding:8px;">이력이 없습니다.</div>';
+                return;
+            }
+
+            list.innerHTML = logs.map(log => {
+                const op = log.operation;
+                const label = OP_LABELS[op] || op;
+                const time = formatKST(log.timestamp);
+                return `
+                <div class="log-entry">
+                    <div class="log-timeline">
+                        <div class="log-dot log-dot-${op}"></div>
+                        <div class="log-line"></div>
+                    </div>
+                    <div class="log-body">
+                        <div class="log-header">
+                            <span class="log-version">v${log.version}</span>
+                            <span class="log-op log-op-${op}">${label}</span>
+                            <span class="log-time">${time}</span>
+                        </div>
+                        <div class="log-detail">${escHtml(log.detail)}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function formatKST(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleString('ko-KR', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false,
+            });
         }
 
         // ========== Init ==========

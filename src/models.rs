@@ -3,6 +3,29 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::fmt;
 
+mod kst_serde {
+    use chrono::{DateTime, FixedOffset, Utc};
+    use serde::{Deserializer, Serializer, Deserialize};
+
+    pub fn serialize<S>(dt: &DateTime<Utc>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let kst = dt.with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+        s.serialize_str(&kst.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(d)?;
+        DateTime::parse_from_rfc3339(&s)
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// 카드 수정 연산 종류
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +43,7 @@ pub struct ModificationLog {
     /// 이 변경 후의 version 번호
     pub version: u64,
     pub operation: ModificationOperation,
+    #[serde(with = "kst_serde")]
     pub timestamp: DateTime<Utc>,
     /// 변경 내용 요약 (동시성 문제 분석용)
     pub detail: String,
