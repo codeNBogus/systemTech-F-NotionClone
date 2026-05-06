@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::fmt;
 
+/// 카드 수정 연산 종류
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModificationOperation {
+    Created,
+    Updated,
+    StatusChanged,
+    Moved,
+    Reordered,
+}
+
+/// 카드 수정 이력 항목
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModificationLog {
+    /// 이 변경 후의 version 번호
+    pub version: u64,
+    pub operation: ModificationOperation,
+    pub timestamp: DateTime<Utc>,
+    /// 변경 내용 요약 (동시성 문제 분석용)
+    pub detail: String,
+}
+
 /// 카드 상태 (미진행 / 진행중 / 완료)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +85,8 @@ pub struct Card {
     pub version: u64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// 수정 이력 — 동시성 문제 분석용
+    pub modification_logs: Vec<ModificationLog>,
 }
 
 // === Request / Response DTOs ===
@@ -172,6 +196,25 @@ impl Card {
             version: 1,
             created_at: now,
             updated_at: now,
+            modification_logs: vec![ModificationLog {
+                version: 1,
+                operation: ModificationOperation::Created,
+                timestamp: now,
+                detail: "카드 생성".to_string(),
+            }],
         }
+    }
+
+    /// 수정 로그를 기록하고 version을 올린다.
+    pub fn push_log(&mut self, operation: ModificationOperation, detail: String) {
+        let now = Utc::now();
+        self.version += 1;
+        self.updated_at = now;
+        self.modification_logs.push(ModificationLog {
+            version: self.version,
+            operation,
+            timestamp: now,
+            detail,
+        });
     }
 }

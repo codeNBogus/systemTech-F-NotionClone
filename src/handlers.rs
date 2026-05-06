@@ -110,3 +110,11 @@ pub async fn reorder_card(
     let card = state.reorder_card(&card_id, req).await?;
     Ok(Json(card))
 }
+
+pub async fn get_card_logs(
+    State(state): State<AppState>,
+    Path(card_id): Path<String>,
+) -> Result<Json<Vec<crate::models::ModificationLog>>, AppError> {
+    let logs = state.get_card_logs(&card_id).await?;
+    Ok(Json(logs))
+}

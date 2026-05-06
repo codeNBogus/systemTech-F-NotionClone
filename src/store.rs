@@ -4,7 +4,6 @@ use tokio::sync::RwLock;
 
 use crate::errors::AppError;
 use crate::models::*;
-use chrono::Utc;
 
 /// 메모리 기반 데이터 저장소
 /// Arc<RwLock<...>>을 사용하여 다중 사용자 동시 접근을 안전하게 처리
@@ -192,19 +191,27 @@ impl AppState {
             });
         }
 
-        // 필드 업데이트
-        if let Some(title) = req.title {
-            card.title = title;
+        // 변경된 필드 추적 (로그용)
+        let mut changed = Vec::new();
+        if let Some(ref title) = req.title {
+            changed.push(format!("title → \"{}\"", title));
+            card.title = title.clone();
         }
-        if let Some(description) = req.description {
-            card.description = description;
+        if let Some(ref description) = req.description {
+            changed.push(format!("description → \"{}\"", description));
+            card.description = description.clone();
         }
         if let Some(status) = req.status {
+            changed.push(format!("status → {}", status));
             card.status = status;
         }
 
-        card.version += 1;
-        card.updated_at = Utc::now();
+        let detail = if changed.is_empty() {
+            "변경 없음".to_string()
+        } else {
+            changed.join(", ")
+        };
+        card.push_log(ModificationOperation::Updated, detail);
 
         Ok(card.clone())
     }
@@ -231,9 +238,9 @@ impl AppState {
             });
         }
 
+        let detail = format!("status → {}", req.status);
         card.status = req.status;
-        card.version += 1;
-        card.updated_at = Utc::now();
+        card.push_log(ModificationOperation::StatusChanged, detail);
 
         Ok(card.clone())
     }
@@ -304,10 +311,13 @@ impl AppState {
 
         // 카드 이동
         let card = store.cards.get_mut(card_id).unwrap();
+        let detail = format!(
+            "column {} → {}, position {} → {}",
+            old_column_id, req.target_column_id, old_position, target_pos
+        );
         card.column_id = req.target_column_id;
         card.position = target_pos;
-        card.version += 1;
-        card.updated_at = Utc::now();
+        card.push_log(ModificationOperation::Moved, detail);
 
         Ok(card.clone())
     }
@@ -367,10 +377,19 @@ impl AppState {
         }
 
         let card = store.cards.get_mut(card_id).unwrap();
+        let detail = format!("position {} → {}", old_pos, new_pos);
         card.position = new_pos;
-        card.version += 1;
-        card.updated_at = Utc::now();
+        card.push_log(ModificationOperation::Reordered, detail);
 
         Ok(card.clone())
+    }
+
+    pub async fn get_card_logs(&self, card_id: &str) -> Result<Vec<ModificationLog>, AppError> {
+        let store = self.inner.read().await;
+        let card = store
+            .cards
+            .get(card_id)
+            .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
+        Ok(card.modification_logs.clone())
     }
 }
