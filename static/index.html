@@ -1,11 +1,20 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
     <title>Collab Board - 협업 보드</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -23,11 +32,13 @@
             justify-content: space-between;
             border-bottom: 1px solid #2a2a4a;
         }
+
         .header h1 {
             font-size: 20px;
             color: #7c83ff;
             font-weight: 600;
         }
+
         .header .subtitle {
             font-size: 12px;
             color: #888;
@@ -43,6 +54,7 @@
             gap: 12px;
             border-bottom: 1px solid #2a2a4a;
         }
+
         .board-bar select {
             background: #1e1e3a;
             color: #e0e0e0;
@@ -63,23 +75,36 @@
             font-weight: 500;
             transition: all 0.2s;
         }
+
         .btn-primary {
             background: #7c83ff;
             color: white;
         }
-        .btn-primary:hover { background: #6b72ee; }
+
+        .btn-primary:hover {
+            background: #6b72ee;
+        }
+
         .btn-secondary {
             background: #2a2a4a;
             color: #ccc;
         }
-        .btn-secondary:hover { background: #3a3a5a; }
+
+        .btn-secondary:hover {
+            background: #3a3a5a;
+        }
+
         .btn-danger {
             background: #ff4757;
             color: white;
             padding: 4px 8px;
             font-size: 11px;
         }
-        .btn-danger:hover { background: #e0404f; }
+
+        .btn-danger:hover {
+            background: #e0404f;
+        }
+
         .btn-small {
             padding: 4px 10px;
             font-size: 12px;
@@ -105,6 +130,7 @@
             flex-direction: column;
             border: 1px solid #2a2a4a;
         }
+
         .column-header {
             padding: 14px 16px;
             display: flex;
@@ -112,11 +138,13 @@
             justify-content: space-between;
             border-bottom: 1px solid #2a2a4a;
         }
+
         .column-header h3 {
             font-size: 14px;
             font-weight: 600;
             color: #b0b0d0;
         }
+
         .column-header .card-count {
             background: #2a2a4a;
             color: #888;
@@ -125,6 +153,7 @@
             font-size: 11px;
             margin-left: 8px;
         }
+
         .column-body {
             padding: 8px;
             display: flex;
@@ -132,9 +161,11 @@
             gap: 8px;
             min-height: 60px;
         }
+
         .column-body.drag-over {
             background: #1e1e3a;
         }
+
         .column-footer {
             padding: 8px;
             border-top: 1px solid #2a2a4a;
@@ -150,25 +181,30 @@
             transition: all 0.15s;
             position: relative;
         }
+
         .card:hover {
             border-color: #7c83ff;
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(124, 131, 255, 0.15);
         }
+
         .card.dragging {
             opacity: 0.5;
             cursor: grabbing;
         }
+
         .card-title {
             font-size: 14px;
             font-weight: 500;
             margin-bottom: 4px;
         }
+
         .card-desc {
             font-size: 12px;
             color: #888;
             line-height: 1.4;
         }
+
         .card-meta {
             display: flex;
             justify-content: space-between;
@@ -177,11 +213,13 @@
             font-size: 11px;
             color: #666;
         }
+
         .card-version {
             background: #2a2a4a;
             padding: 1px 6px;
             border-radius: 4px;
         }
+
         .card-actions {
             display: none;
             position: absolute;
@@ -189,6 +227,7 @@
             right: 8px;
             gap: 4px;
         }
+
         .card:hover .card-actions {
             display: flex;
         }
@@ -204,27 +243,39 @@
             transition: all 0.15s;
             user-select: none;
         }
+
         .status-badge:hover {
             filter: brightness(1.2);
             transform: scale(1.05);
         }
+
         .status-todo {
             background: #3a3a5a;
             color: #a0a0c0;
         }
+
         .status-in_progress {
             background: #2d4a5a;
             color: #7dc8ff;
         }
+
         .status-done {
             background: #2d5a3d;
             color: #7dffb3;
         }
 
         /* Status indicator bar on card left */
-        .card.card-status-todo { border-left: 3px solid #6a6a8a; }
-        .card.card-status-in_progress { border-left: 3px solid #4a9eff; }
-        .card.card-status-done { border-left: 3px solid #4aff8a; }
+        .card.card-status-todo {
+            border-left: 3px solid #6a6a8a;
+        }
+
+        .card.card-status-in_progress {
+            border-left: 3px solid #4a9eff;
+        }
+
+        .card.card-status-done {
+            border-left: 3px solid #4aff8a;
+        }
 
         /* Add column button */
         .add-column {
@@ -242,6 +293,7 @@
             font-size: 14px;
             transition: all 0.2s;
         }
+
         .add-column:hover {
             border-color: #7c83ff;
             color: #7c83ff;
@@ -252,13 +304,20 @@
         .modal-overlay {
             display: none;
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.6);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
             z-index: 100;
             align-items: center;
             justify-content: center;
         }
-        .modal-overlay.active { display: flex; }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
         .modal {
             background: #1a1a2e;
             border: 1px solid #2a2a4a;
@@ -267,12 +326,16 @@
             min-width: 400px;
             max-width: 500px;
         }
+
         .modal h2 {
             font-size: 18px;
             margin-bottom: 16px;
             color: #7c83ff;
         }
-        .modal input, .modal textarea, .modal select {
+
+        .modal input,
+        .modal textarea,
+        .modal select {
             width: 100%;
             background: #22223a;
             border: 1px solid #3a3a5a;
@@ -283,11 +346,19 @@
             margin-bottom: 12px;
             font-family: inherit;
         }
-        .modal textarea { min-height: 80px; resize: vertical; }
-        .modal input:focus, .modal textarea:focus, .modal select:focus {
+
+        .modal textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .modal input:focus,
+        .modal textarea:focus,
+        .modal select:focus {
             outline: none;
             border-color: #7c83ff;
         }
+
         .modal-actions {
             display: flex;
             gap: 8px;
@@ -305,6 +376,7 @@
             flex-direction: column;
             gap: 8px;
         }
+
         .toast {
             padding: 12px 20px;
             border-radius: 8px;
@@ -312,13 +384,35 @@
             animation: slideIn 0.3s ease;
             max-width: 350px;
         }
-        .toast-success { background: #2d5a3d; color: #7dffb3; border: 1px solid #3d7a5d; }
-        .toast-error { background: #5a2d2d; color: #ff7d7d; border: 1px solid #7a3d3d; }
-        .toast-warning { background: #5a4a2d; color: #ffd77d; border: 1px solid #7a6a3d; }
+
+        .toast-success {
+            background: #2d5a3d;
+            color: #7dffb3;
+            border: 1px solid #3d7a5d;
+        }
+
+        .toast-error {
+            background: #5a2d2d;
+            color: #ff7d7d;
+            border: 1px solid #7a3d3d;
+        }
+
+        .toast-warning {
+            background: #5a4a2d;
+            color: #ffd77d;
+            border: 1px solid #7a6a3d;
+        }
 
         @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
 
         /* Empty state */
@@ -330,8 +424,16 @@
             height: 60vh;
             color: #666;
         }
-        .empty-state h2 { font-size: 24px; margin-bottom: 8px; color: #888; }
-        .empty-state p { margin-bottom: 16px; }
+
+        .empty-state h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: #888;
+        }
+
+        .empty-state p {
+            margin-bottom: 16px;
+        }
 
         label {
             display: block;
@@ -348,6 +450,7 @@
             display: flex;
             flex-direction: column;
         }
+
         .log-list {
             overflow-y: auto;
             flex: 1;
@@ -356,6 +459,7 @@
             flex-direction: column;
             gap: 0;
         }
+
         .log-entry {
             display: flex;
             gap: 12px;
@@ -363,7 +467,11 @@
             border-bottom: 1px solid #2a2a4a;
             position: relative;
         }
-        .log-entry:last-child { border-bottom: none; }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
         .log-timeline {
             display: flex;
             flex-direction: column;
@@ -371,6 +479,7 @@
             width: 32px;
             flex-shrink: 0;
         }
+
         .log-dot {
             width: 10px;
             height: 10px;
@@ -378,25 +487,49 @@
             margin-top: 3px;
             flex-shrink: 0;
         }
-        .log-dot-created  { background: #4aff8a; }
-        .log-dot-updated  { background: #7c83ff; }
-        .log-dot-status_changed { background: #4a9eff; }
-        .log-dot-moved    { background: #ffd77d; }
-        .log-dot-reordered { background: #ff9f7d; }
+
+        .log-dot-created {
+            background: #4aff8a;
+        }
+
+        .log-dot-updated {
+            background: #7c83ff;
+        }
+
+        .log-dot-status_changed {
+            background: #4a9eff;
+        }
+
+        .log-dot-moved {
+            background: #ffd77d;
+        }
+
+        .log-dot-reordered {
+            background: #ff9f7d;
+        }
+
         .log-line {
             width: 1px;
             flex: 1;
             background: #2a2a4a;
             margin-top: 4px;
         }
-        .log-entry:last-child .log-line { display: none; }
-        .log-body { flex: 1; }
+
+        .log-entry:last-child .log-line {
+            display: none;
+        }
+
+        .log-body {
+            flex: 1;
+        }
+
         .log-header {
             display: flex;
             align-items: center;
             gap: 8px;
             margin-bottom: 3px;
         }
+
         .log-version {
             background: #2a2a4a;
             color: #a0a0c0;
@@ -405,22 +538,45 @@
             font-size: 11px;
             font-weight: 600;
         }
+
         .log-op {
             font-size: 11px;
             font-weight: 600;
             padding: 1px 7px;
             border-radius: 4px;
         }
-        .log-op-created  { background: #2d5a3d; color: #4aff8a; }
-        .log-op-updated  { background: #2a2a5a; color: #a0a8ff; }
-        .log-op-status_changed { background: #1e3a5a; color: #4a9eff; }
-        .log-op-moved    { background: #5a4a1e; color: #ffd77d; }
-        .log-op-reordered { background: #5a3a1e; color: #ff9f7d; }
+
+        .log-op-created {
+            background: #2d5a3d;
+            color: #4aff8a;
+        }
+
+        .log-op-updated {
+            background: #2a2a5a;
+            color: #a0a8ff;
+        }
+
+        .log-op-status_changed {
+            background: #1e3a5a;
+            color: #4a9eff;
+        }
+
+        .log-op-moved {
+            background: #5a4a1e;
+            color: #ffd77d;
+        }
+
+        .log-op-reordered {
+            background: #5a3a1e;
+            color: #ff9f7d;
+        }
+
         .log-time {
             font-size: 11px;
             color: #666;
             margin-left: auto;
         }
+
         .log-detail {
             font-size: 12px;
             color: #999;
@@ -428,6 +584,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="header">
         <div>
@@ -458,7 +615,8 @@
         <div class="modal" onclick="event.stopPropagation()">
             <h2>새 보드 만들기</h2>
             <label>보드 이름</label>
-            <input type="text" id="boardTitleInput" placeholder="예: 프로젝트 관리" onkeydown="if(event.key==='Enter') createBoard()">
+            <input type="text" id="boardTitleInput" placeholder="예: 프로젝트 관리"
+                onkeydown="if(event.key==='Enter') createBoard()">
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="hideModal('createBoardModal')">취소</button>
                 <button class="btn btn-primary" onclick="createBoard()">만들기</button>
@@ -471,7 +629,8 @@
         <div class="modal" onclick="event.stopPropagation()">
             <h2>새 컬럼 추가</h2>
             <label>컬럼 이름</label>
-            <input type="text" id="columnTitleInput" placeholder="예: To Do" onkeydown="if(event.key==='Enter') createColumn()">
+            <input type="text" id="columnTitleInput" placeholder="예: To Do"
+                onkeydown="if(event.key==='Enter') createColumn()">
             <div class="modal-actions">
                 <button class="btn btn-secondary" onclick="hideModal('createColumnModal')">취소</button>
                 <button class="btn btn-primary" onclick="createColumn()">추가</button>
@@ -862,11 +1021,11 @@
         // ========== Card Logs ==========
 
         const OP_LABELS = {
-            created:       '생성',
-            updated:       '수정',
-            status_changed:'상태변경',
-            moved:         '이동',
-            reordered:     '순서변경',
+            created: '생성',
+            updated: '수정',
+            status_changed: '상태변경',
+            moved: '이동',
+            reordered: '순서변경',
         };
 
         async function showCardLogs(cardId, cardTitle) {
@@ -913,8 +1072,40 @@
             });
         }
 
+        // ========== WebSocket ==========
+
+        function connectWebSocket() {
+            const ws = new WebSocket(`ws://${location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket 연결됨');
+            };
+
+            ws.onmessage = (event) => {
+                console.log('📨 이벤트 수신:', event.data);
+                // 현재 보드를 보고 있을 때만 새로고침
+                if (currentBoardId) {
+                    loadBoard();
+                }
+                // 보드 목록도 갱신 (다른 사용자가 보드 추가/삭제했을 수 있음)
+                loadBoards();
+            };
+
+            ws.onclose = () => {
+                console.log('🔌 WebSocket 끊어짐, 3초 후 재연결...');
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (e) => {
+                console.error('❌ WebSocket 에러:', e);
+            };
+        }
+
         // ========== Init ==========
         loadBoards();
+        connectWebSocket();
+
     </script>
 </body>
+
 </html>
