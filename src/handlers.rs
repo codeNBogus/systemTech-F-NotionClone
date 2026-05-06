@@ -146,3 +146,7 @@ pub async fn get_card_logs(
     let logs = state.get_card_logs(&card_id).await?;
     Ok(Json(logs))
 }
+
+pub async fn get_stats(State(state): State<AppState>) -> Json<crate::models::DashboardStats> {
+    Json(state.get_stats().await)
+}

@@ -35,6 +35,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/api/cards/:card_id/status", patch(handlers::update_card_status))
         .route("/api/cards/:card_id/reorder", patch(handlers::reorder_card))
         .route("/api/cards/:card_id/logs", get(handlers::get_card_logs))
+        .route("/api/stats", get(handlers::get_stats))
         .route("/ws", get(ws::ws_handler))
         .fallback_service(ServeDir::new("static"))
         .layer(CorsLayer::permissive())

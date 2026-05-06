@@ -24,6 +24,9 @@ struct StoreInner {
     columns: HashMap<String, Column>,
     cards: HashMap<String, Card>,
     audit_logs: HashMap<String, Vec<AuditLog>>,
+    total_writes: u64,
+    conflict_count: u64,
+    recent_conflicts: Vec<ConflictEvent>,
 }
 
 impl AppState {
@@ -36,6 +39,9 @@ impl AppState {
                 columns: HashMap::new(),
                 cards: HashMap::new(),
                 audit_logs: HashMap::new(),
+                total_writes: 0,
+                conflict_count: 0,
+                recent_conflicts: Vec::new(),
             })),
             tx,
             wal: None,
@@ -59,6 +65,9 @@ impl AppState {
                 columns: HashMap::new(),
                 cards: HashMap::new(),
                 audit_logs: HashMap::new(),
+                total_writes: 0,
+                conflict_count: 0,
+                recent_conflicts: Vec::new(),
             })),
             tx,
             wal: Some(wal),
@@ -91,6 +100,7 @@ impl AppState {
                         .retain(|_, c| !deleted_column_ids.contains(&c.column_id));
                 }
                 WsEvent::AuditLogged { .. } => {}
+                WsEvent::StatsUpdated { .. } => {}
 
                 WsEvent::ColumnCreated { column } => {
                     store.columns.insert(column.id.clone(), column);
@@ -143,6 +153,61 @@ impl AppState {
         }
         if let Ok(json) = serde_json::to_string(&event) {
             let _ = self.tx.send(Arc::new(json));
+        }
+    }
+
+    /// WAL 기록 없이 WebSocket으로만 브로드캐스트 (통계 이벤트용)
+    fn emit_ws_only(&self, event: WsEvent) {
+        if self.tx.receiver_count() == 0 {
+            return;
+        }
+        if let Ok(json) = serde_json::to_string(&event) {
+            let _ = self.tx.send(Arc::new(json));
+        }
+    }
+
+    /// 버전 충돌 기록 — 카운터 증가 + 최근 목록 유지(최대 20개) + 실시간 브로드캐스트
+    fn record_conflict(
+        &self,
+        store: &mut StoreInner,
+        card_id: &str,
+        card_title: &str,
+        actor: &str,
+        expected: u64,
+        actual: u64,
+    ) {
+        store.conflict_count += 1;
+        store.recent_conflicts.push(ConflictEvent {
+            card_id: card_id.to_string(),
+            card_title: card_title.to_string(),
+            actor_nickname: actor.to_string(),
+            expected_version: expected,
+            actual_version: actual,
+            timestamp: chrono::Utc::now(),
+        });
+        if store.recent_conflicts.len() > 20 {
+            store.recent_conflicts.remove(0);
+        }
+        let stats = DashboardStats {
+            total_writes: store.total_writes,
+            conflict_count: store.conflict_count,
+            conflict_rate_pct: store.conflict_count as f64 / store.total_writes as f64 * 100.0,
+            recent_conflicts: store.recent_conflicts.clone(),
+        };
+        self.emit_ws_only(WsEvent::StatsUpdated { stats });
+    }
+
+    pub async fn get_stats(&self) -> DashboardStats {
+        let store = self.inner.read().await;
+        DashboardStats {
+            total_writes: store.total_writes,
+            conflict_count: store.conflict_count,
+            conflict_rate_pct: if store.total_writes > 0 {
+                store.conflict_count as f64 / store.total_writes as f64 * 100.0
+            } else {
+                0.0
+            },
+            recent_conflicts: store.recent_conflicts.clone(),
         }
     }
 
@@ -439,18 +504,22 @@ impl AppState {
         let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
-        let card = store
+        let (card_version, card_title) = store
             .cards
-            .get_mut(card_id)
+            .get(card_id)
+            .map(|c| (c.version, c.title.clone()))
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        if card.version != req.version {
+        store.total_writes += 1;
+        if card_version != req.version {
+            self.record_conflict(&mut store, card_id, &card_title, &actor, req.version, card_version);
             return Err(AppError::VersionConflict {
                 expected: req.version,
-                actual: card.version,
+                actual: card_version,
             });
         }
 
+        let card = store.cards.get_mut(card_id).unwrap();
         let mut changed = Vec::new();
         if let Some(ref title) = req.title {
             changed.push(format!("title → \"{}\"", title));
@@ -505,18 +574,22 @@ impl AppState {
         let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
-        let card = store
+        let (card_version, card_title) = store
             .cards
-            .get_mut(card_id)
+            .get(card_id)
+            .map(|c| (c.version, c.title.clone()))
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        if card.version != req.version {
+        store.total_writes += 1;
+        if card_version != req.version {
+            self.record_conflict(&mut store, card_id, &card_title, &actor, req.version, card_version);
             return Err(AppError::VersionConflict {
                 expected: req.version,
-                actual: card.version,
+                actual: card_version,
             });
         }
 
+        let card = store.cards.get_mut(card_id).unwrap();
         let detail = format!("status → {}", req.status);
         card.status = req.status;
         card.push_log(ModificationOperation::StatusChanged, detail);
@@ -602,20 +675,20 @@ impl AppState {
             return Err(AppError::ColumnNotFound(req.target_column_id.clone()));
         }
 
-        let card = store
+        let (card_version, card_title, old_column_id, old_position) = store
             .cards
             .get(card_id)
+            .map(|c| (c.version, c.title.clone(), c.column_id.clone(), c.position))
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        if card.version != req.version {
+        store.total_writes += 1;
+        if card_version != req.version {
+            self.record_conflict(&mut store, card_id, &card_title, &actor, req.version, card_version);
             return Err(AppError::VersionConflict {
                 expected: req.version,
-                actual: card.version,
+                actual: card_version,
             });
         }
-
-        let old_column_id = card.column_id.clone();
-        let old_position = card.position;
 
         for c in store.cards.values_mut() {
             if c.column_id == old_column_id && c.position > old_position && c.id != card_id {
@@ -672,24 +745,24 @@ impl AppState {
         let actor = normalize_actor(req.actor_nickname.clone());
         let mut store = self.inner.write().await;
 
-        let card = store
+        let (card_version, card_title, column_id, old_pos) = store
             .cards
             .get(card_id)
+            .map(|c| (c.version, c.title.clone(), c.column_id.clone(), c.position))
             .ok_or_else(|| AppError::CardNotFound(card_id.to_string()))?;
 
-        if card.version != req.version {
-            return Err(AppError::VersionConflict {
-                expected: req.version,
-                actual: card.version,
-            });
+        let new_pos = req.target_position;
+        if old_pos == new_pos {
+            return Ok(store.cards.get(card_id).unwrap().clone());
         }
 
-        let column_id = card.column_id.clone();
-        let old_pos = card.position;
-        let new_pos = req.target_position;
-
-        if old_pos == new_pos {
-            return Ok(card.clone());
+        store.total_writes += 1;
+        if card_version != req.version {
+            self.record_conflict(&mut store, card_id, &card_title, &actor, req.version, card_version);
+            return Err(AppError::VersionConflict {
+                expected: req.version,
+                actual: card_version,
+            });
         }
 
         if new_pos > old_pos {

@@ -600,6 +600,7 @@
         </select>
         <button class="btn btn-primary btn-small" onclick="showCreateBoardModal()">+ 새 보드</button>
         <button class="btn btn-secondary btn-small" onclick="showBoardAuditLogs()">Audit Log</button>
+        <button class="btn btn-secondary btn-small" onclick="showDashboard()" style="background:#2a1a4a;color:#c084fc;border-color:#7c3aed;">Race 대시보드</button>
         <button onclick="deleteBoard()" class="btn-danger">🗑️ 보드 삭제</button>
     </div>
 
@@ -665,6 +666,34 @@
             <div class="log-list" id="logList"></div>
             <div class="modal-actions" style="margin-top:12px;">
                 <button class="btn btn-secondary" onclick="hideModal('cardLogModal')">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Race Condition Dashboard Modal -->
+    <div id="dashboardModal" class="modal-overlay" onclick="closeModal(event, 'dashboardModal')">
+        <div class="modal log-modal" onclick="event.stopPropagation()" style="max-width:600px;">
+            <h2 style="color:#c084fc;">Race Condition 대시보드</h2>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0;">
+                <div style="background:#1a1a2e; border:1px solid #3a3a5a; border-radius:8px; padding:12px; text-align:center;">
+                    <div style="font-size:11px; color:#888; margin-bottom:4px;">총 쓰기 요청</div>
+                    <div id="dashTotalWrites" style="font-size:28px; font-weight:700; color:#7c83ff;">0</div>
+                </div>
+                <div style="background:#1a1a2e; border:1px solid #3a3a5a; border-radius:8px; padding:12px; text-align:center;">
+                    <div style="font-size:11px; color:#888; margin-bottom:4px;">충돌 횟수</div>
+                    <div id="dashConflictCount" style="font-size:28px; font-weight:700; color:#f87171;">0</div>
+                </div>
+                <div style="background:#1a1a2e; border:1px solid #3a3a5a; border-radius:8px; padding:12px; text-align:center;">
+                    <div style="font-size:11px; color:#888; margin-bottom:4px;">충돌률</div>
+                    <div id="dashConflictRate" style="font-size:28px; font-weight:700; color:#fb923c;">0.0%</div>
+                </div>
+            </div>
+            <div style="font-size:12px; color:#888; margin-bottom:8px;">최근 충돌 이력 (최대 20개)</div>
+            <div class="log-list" id="dashConflictList" style="max-height:320px;">
+                <div style="color:#555; padding:8px; font-size:13px;">충돌 이력 없음</div>
+            </div>
+            <div class="modal-actions" style="margin-top:12px;">
+                <button class="btn btn-secondary" onclick="hideModal('dashboardModal')">닫기</button>
             </div>
         </div>
     </div>
@@ -1194,6 +1223,45 @@
             });
         }
 
+        // ========== Race Condition Dashboard ==========
+
+        async function showDashboard() {
+            showModal('dashboardModal');
+            try {
+                const stats = await api('GET', '/stats');
+                updateDashboard(stats);
+            } catch (e) {
+                showToast('대시보드 로드 실패', 'error');
+            }
+        }
+
+        function updateDashboard(stats) {
+            document.getElementById('dashTotalWrites').textContent = stats.total_writes;
+            document.getElementById('dashConflictCount').textContent = stats.conflict_count;
+            document.getElementById('dashConflictRate').textContent = stats.conflict_rate_pct.toFixed(1) + '%';
+
+            const list = document.getElementById('dashConflictList');
+            if (!stats.recent_conflicts || !stats.recent_conflicts.length) {
+                list.innerHTML = '<div style="color:#555; padding:8px; font-size:13px;">충돌 이력 없음</div>';
+                return;
+            }
+            list.innerHTML = [...stats.recent_conflicts].reverse().map(c => `
+                <div class="log-entry">
+                    <div class="log-timeline">
+                        <div class="log-dot" style="background:#f87171;"></div>
+                        <div class="log-line"></div>
+                    </div>
+                    <div class="log-body">
+                        <div class="log-header">
+                            <span class="log-version" style="color:#c084fc;">${escHtml(c.actor_nickname)}</span>
+                            <span class="log-op" style="background:#3b1a1a;color:#f87171;">충돌</span>
+                            <span class="log-time">${formatKST(c.timestamp)}</span>
+                        </div>
+                        <div class="log-detail">카드 "${escHtml(c.card_title)}" — 예상 v${c.expected_version} / 실제 v${c.actual_version}</div>
+                    </div>
+                </div>`).join('');
+        }
+
         // ========== WebSocket ==========
 
         function boardHasColumn(columnId) {
@@ -1237,6 +1305,10 @@
             }
 
             switch (msg.event) {
+                case 'stats_updated':
+                    updateDashboard(msg.stats);
+                    return;
+
                 case 'audit_logged':
                     return;
 

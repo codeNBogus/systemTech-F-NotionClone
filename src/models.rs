@@ -139,6 +139,27 @@ pub struct AuditLog {
     pub detail: String,
 }
 
+/// Race Condition 충돌 단건 이벤트
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictEvent {
+    pub card_id: String,
+    pub card_title: String,
+    pub actor_nickname: String,
+    pub expected_version: u64,
+    pub actual_version: u64,
+    #[serde(with = "kst_serde")]
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Race Condition 대시보드 통계
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardStats {
+    pub total_writes: u64,
+    pub conflict_count: u64,
+    pub conflict_rate_pct: f64,
+    pub recent_conflicts: Vec<ConflictEvent>,
+}
+
 // === Request / Response DTOs ===
 
 #[derive(Debug, Deserialize)]
@@ -242,6 +263,7 @@ pub enum WsEvent {
     CardReordered { card: Card },
     ColumnCreated { column: Column },
     ColumnDeleted { column_id: String },
+    StatsUpdated { stats: DashboardStats },
 }
 
 
