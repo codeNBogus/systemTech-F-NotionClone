@@ -318,6 +318,10 @@ cargo run
 | 이준서 | Race Condition 대시보드 — 버전 충돌 통계 실시간 시각화 |
 | 이해성 | WAL 영속성 + 보드 삭제 + 실시간 동기화 클라이언트 |
 
+## 시연 링크
+
+https://youtu.be/fpkwhojt90k
+
 ## 📄 라이선스
 
 MIT License
